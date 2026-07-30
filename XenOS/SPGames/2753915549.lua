@@ -3,14 +3,31 @@
                     XenOS - Blox Fruits
     ============================================================
 
-    UI Foundation v0.2
+    Version: 0.3.0
+
+    Current Features:
+        - Auto Farm Chest
 
     Controls:
-        Right Shift = Show / Hide XenOS
+        RightShift = Show / Hide XenOS
 
-    Re-executing:
-        Automatically destroys the previous XenOS UI
-        and disconnects its old event connections.
+    Auto Farm Chest:
+        Workspace
+        └── Map
+            └── <Model Name>
+                └── Chests
+                    ├── Chest1
+                    ├── Chest2
+                    ├── Chest3
+                    └── ...
+
+    The farmer:
+        1. Finds the nearest chest.
+        2. Tweens toward it.
+        3. Watches the chest that was selected.
+        4. Detects when its original children are deleted.
+        5. Cancels the tween.
+        6. Moves to the next chest.
 ]]
 
 ------------------------------------------------------------
@@ -20,11 +37,17 @@
 local Players =
     game:GetService("Players")
 
+local Workspace =
+    game:GetService("Workspace")
+
 local UserInputService =
     game:GetService("UserInputService")
 
 local TweenService =
     game:GetService("TweenService")
+
+local RunService =
+    game:GetService("RunService")
 
 local CoreGui =
     game:GetService("CoreGui")
@@ -42,7 +65,7 @@ if not Player then
 end
 
 ------------------------------------------------------------
--- Global XenOS state
+-- Global XenOS environment
 ------------------------------------------------------------
 
 local ENV =
@@ -50,18 +73,12 @@ local ENV =
     or _G
 
 ENV.XenOS =
-    ENV.XenOS or {}
+    ENV.XenOS
+    or {}
 
 ------------------------------------------------------------
--- DELETE PREVIOUS VERSION
+-- Remove previous Blox Fruits XenOS instance
 ------------------------------------------------------------
-
--- This is important.
---
--- Merely destroying the old ScreenGui would NOT necessarily
--- remove UserInputService connections from an older execution.
---
--- So every XenOS game module stores its cleanup function here.
 
 if ENV.XenOS.BloxFruitsUI then
 
@@ -69,22 +86,29 @@ if ENV.XenOS.BloxFruitsUI then
         ENV.XenOS.BloxFruitsUI
 
     if type(old.Destroy) == "function" then
+
         pcall(function()
             old:Destroy()
         end)
+
     end
 
-    ENV.XenOS.BloxFruitsUI =
-        nil
 end
 
+ENV.XenOS.BloxFruitsUI =
+    nil
+
 ------------------------------------------------------------
--- Connection manager
+-- Connections
 ------------------------------------------------------------
 
-local Connections = {}
+local Connections =
+    {}
 
-local function connect(signal, callback)
+local function Connect(
+    signal,
+    callback
+)
 
     local connection =
         signal:Connect(callback)
@@ -98,7 +122,58 @@ local function connect(signal, callback)
 end
 
 ------------------------------------------------------------
--- Determine Sea
+-- Module state
+------------------------------------------------------------
+
+local Destroyed =
+    false
+
+local AutoFarmChest =
+    false
+
+local CurrentChest =
+    nil
+
+local CurrentTween =
+    nil
+
+local FarmGeneration =
+    0
+
+------------------------------------------------------------
+-- Configuration
+------------------------------------------------------------
+
+local Config = {
+
+    --------------------------------------------------------
+    -- Studs traveled per second
+    --------------------------------------------------------
+
+    ChestTweenSpeed =
+        260,
+
+    --------------------------------------------------------
+    -- Position relative to chest
+    --------------------------------------------------------
+
+    ChestOffset =
+        Vector3.new(
+            0,
+            1.5,
+            0
+        ),
+
+    --------------------------------------------------------
+    -- Delay before rescanning after chest collection
+    --------------------------------------------------------
+
+    RescanDelay =
+        0.10,
+}
+
+------------------------------------------------------------
+-- Sea detection
 ------------------------------------------------------------
 
 local SEA_NAMES = {
@@ -124,111 +199,214 @@ local CurrentSea =
 local Theme = {
 
     Background =
-        Color3.fromRGB(13, 23, 34),
+        Color3.fromRGB(
+            13,
+            23,
+            34
+        ),
 
     Surface =
-        Color3.fromRGB(18, 32, 46),
+        Color3.fromRGB(
+            18,
+            32,
+            46
+        ),
 
     SurfaceRaised =
-        Color3.fromRGB(24, 43, 60),
+        Color3.fromRGB(
+            24,
+            43,
+            60
+        ),
 
     SurfaceHover =
-        Color3.fromRGB(32, 55, 75),
+        Color3.fromRGB(
+            31,
+            54,
+            74
+        ),
 
     Gold =
-        Color3.fromRGB(224, 179, 78),
+        Color3.fromRGB(
+            224,
+            179,
+            78
+        ),
 
     GoldSoft =
-        Color3.fromRGB(165, 126, 56),
+        Color3.fromRGB(
+            165,
+            126,
+            56
+        ),
 
     Ocean =
-        Color3.fromRGB(46, 105, 155),
+        Color3.fromRGB(
+            46,
+            105,
+            155
+        ),
 
     OceanBright =
-        Color3.fromRGB(69, 137, 191),
-
-    Red =
-        Color3.fromRGB(171, 57, 53),
-
-    RedHover =
-        Color3.fromRGB(204, 70, 64),
+        Color3.fromRGB(
+            69,
+            137,
+            191
+        ),
 
     Green =
-        Color3.fromRGB(83, 184, 116),
+        Color3.fromRGB(
+            83,
+            184,
+            116
+        ),
+
+    Red =
+        Color3.fromRGB(
+            171,
+            57,
+            53
+        ),
+
+    RedHover =
+        Color3.fromRGB(
+            204,
+            70,
+            64
+        ),
 
     Text =
-        Color3.fromRGB(243, 239, 226),
+        Color3.fromRGB(
+            243,
+            239,
+            226
+        ),
 
     TextMuted =
-        Color3.fromRGB(145, 160, 172),
+        Color3.fromRGB(
+            145,
+            160,
+            172
+        ),
 
     TextDark =
-        Color3.fromRGB(20, 23, 27),
+        Color3.fromRGB(
+            20,
+            23,
+            27
+        ),
 }
 
 ------------------------------------------------------------
--- Utility
+-- UI utilities
 ------------------------------------------------------------
 
-local function new(className, properties)
+local function New(
+    className,
+    properties
+)
 
     local object =
         Instance.new(className)
 
-    for property, value in pairs(properties or {}) do
-        object[property] = value
+    for property, value
+        in pairs(properties or {})
+    do
+
+        object[property] =
+            value
+
     end
 
     return object
 end
 
-local function corner(object, radius)
+local function Corner(
+    object,
+    radius
+)
 
-    local uiCorner =
+    local corner =
         Instance.new("UICorner")
 
-    uiCorner.CornerRadius =
-        UDim.new(0, radius or 7)
+    corner.CornerRadius =
+        UDim.new(
+            0,
+            radius or 7
+        )
 
-    uiCorner.Parent =
+    corner.Parent =
         object
 
-    return uiCorner
+    return corner
 end
 
-local function stroke(
+local function Stroke(
     object,
     color,
     thickness,
     transparency
 )
 
-    local uiStroke =
+    local stroke =
         Instance.new("UIStroke")
 
-    uiStroke.Color =
-        color or Theme.GoldSoft
+    stroke.Color =
+        color
+        or Theme.GoldSoft
 
-    uiStroke.Thickness =
-        thickness or 1
+    stroke.Thickness =
+        thickness
+        or 1
 
-    uiStroke.Transparency =
-        transparency or 0
+    stroke.Transparency =
+        transparency
+        or 0
 
-    uiStroke.ApplyStrokeMode =
+    stroke.ApplyStrokeMode =
         Enum.ApplyStrokeMode.Border
 
-    uiStroke.Parent =
+    stroke.Parent =
         object
 
-    return uiStroke
+    return stroke
 end
 
 ------------------------------------------------------------
--- Resolve UI parent
+-- Character helpers
 ------------------------------------------------------------
 
-local function resolveUIParent()
+local function GetCharacter()
+
+    local character =
+        Player.Character
+
+    if not character then
+        return nil
+    end
+
+    return character
+end
+
+local function GetRootPart()
+
+    local character =
+        GetCharacter()
+
+    if not character then
+        return nil
+    end
+
+    return character:FindFirstChild(
+        "HumanoidRootPart"
+    )
+end
+
+------------------------------------------------------------
+-- UI Parent
+------------------------------------------------------------
+
+local function ResolveUIParent()
 
     if type(gethui) == "function" then
 
@@ -239,8 +417,10 @@ local function resolveUIParent()
             success
             and typeof(result) == "Instance"
         then
+
             return result
         end
+
     end
 
     local success, result =
@@ -258,25 +438,25 @@ local function resolveUIParent()
 end
 
 local UIParent =
-    resolveUIParent()
+    ResolveUIParent()
 
 ------------------------------------------------------------
--- HARD DELETE DUPLICATE GUIs
+-- Hard remove duplicate ScreenGui
 ------------------------------------------------------------
 
--- Handles older XenOS versions that weren't stored in
--- ENV.XenOS.BloxFruitsUI.
-
-for _, child in ipairs(
-    UIParent:GetChildren()
-) do
+for _, child
+    in ipairs(UIParent:GetChildren())
+do
 
     if
         child:IsA("ScreenGui")
         and child.Name == "XenOS_BloxFruits"
     then
+
         child:Destroy()
+
     end
+
 end
 
 ------------------------------------------------------------
@@ -284,7 +464,7 @@ end
 ------------------------------------------------------------
 
 local ScreenGui =
-    new(
+    New(
         "ScreenGui",
         {
             Name =
@@ -296,11 +476,11 @@ local ScreenGui =
             IgnoreGuiInset =
                 false,
 
-            ZIndexBehavior =
-                Enum.ZIndexBehavior.Sibling,
-
             DisplayOrder =
                 1000000,
+
+            ZIndexBehavior =
+                Enum.ZIndexBehavior.Sibling,
 
             Enabled =
                 true,
@@ -311,35 +491,33 @@ ScreenGui.Parent =
     UIParent
 
 ------------------------------------------------------------
--- GUI protection if available
-------------------------------------------------------------
-
-pcall(function()
-
-    if syn and syn.protect_gui then
-        syn.protect_gui(ScreenGui)
-    end
-end)
-
-------------------------------------------------------------
--- Main window
+-- Main Window
 ------------------------------------------------------------
 
 local Main =
-    new(
+    New(
         "Frame",
         {
             Name =
                 "Main",
 
             AnchorPoint =
-                Vector2.new(0.5, 0.5),
+                Vector2.new(
+                    0.5,
+                    0.5
+                ),
 
             Position =
-                UDim2.fromScale(0.5, 0.5),
+                UDim2.fromScale(
+                    0.5,
+                    0.5
+                ),
 
             Size =
-                UDim2.fromOffset(540, 330),
+                UDim2.fromOffset(
+                    520,
+                    310
+                ),
 
             BackgroundColor3 =
                 Theme.Background,
@@ -355,9 +533,12 @@ local Main =
 Main.Parent =
     ScreenGui
 
-corner(Main, 10)
+Corner(
+    Main,
+    10
+)
 
-stroke(
+Stroke(
     Main,
     Theme.GoldSoft,
     1,
@@ -365,15 +546,20 @@ stroke(
 )
 
 ------------------------------------------------------------
--- Top accent
+-- Gold accent
 ------------------------------------------------------------
 
 local Accent =
-    new(
+    New(
         "Frame",
         {
             Size =
-                UDim2.new(1, 0, 0, 3),
+                UDim2.new(
+                    1,
+                    0,
+                    0,
+                    3
+                ),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -387,7 +573,7 @@ Accent.Parent =
     Main
 
 local AccentGradient =
-    new(
+    New(
         "UIGradient",
         {
             Color =
@@ -419,17 +605,25 @@ AccentGradient.Parent =
 ------------------------------------------------------------
 
 local Topbar =
-    new(
+    New(
         "Frame",
         {
             Name =
                 "Topbar",
 
             Position =
-                UDim2.fromOffset(0, 3),
+                UDim2.fromOffset(
+                    0,
+                    3
+                ),
 
             Size =
-                UDim2.new(1, 0, 0, 49),
+                UDim2.new(
+                    1,
+                    0,
+                    0,
+                    46
+                ),
 
             BackgroundColor3 =
                 Theme.Surface,
@@ -446,18 +640,24 @@ Topbar.Parent =
     Main
 
 ------------------------------------------------------------
--- Small logo
+-- Logo
 ------------------------------------------------------------
 
 local Logo =
-    new(
+    New(
         "Frame",
         {
             Position =
-                UDim2.fromOffset(13, 10),
+                UDim2.fromOffset(
+                    12,
+                    9
+                ),
 
             Size =
-                UDim2.fromOffset(29, 29),
+                UDim2.fromOffset(
+                    28,
+                    28
+                ),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -470,14 +670,20 @@ local Logo =
 Logo.Parent =
     Topbar
 
-corner(Logo, 7)
+Corner(
+    Logo,
+    7
+)
 
 local LogoText =
-    new(
+    New(
         "TextLabel",
         {
             Size =
-                UDim2.fromScale(1, 1),
+                UDim2.fromScale(
+                    1,
+                    1
+                ),
 
             BackgroundTransparency =
                 1,
@@ -489,7 +695,7 @@ local LogoText =
                 Theme.TextDark,
 
             TextSize =
-                18,
+                17,
 
             Font =
                 Enum.Font.GothamBlack,
@@ -504,14 +710,22 @@ LogoText.Parent =
 ------------------------------------------------------------
 
 local Title =
-    new(
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(53, 7),
+                UDim2.fromOffset(
+                    50,
+                    6
+                ),
 
             Size =
-                UDim2.new(1, -115, 0, 20),
+                UDim2.new(
+                    1,
+                    -110,
+                    0,
+                    19
+                ),
 
             BackgroundTransparency =
                 1,
@@ -523,7 +737,7 @@ local Title =
                 Theme.Text,
 
             TextSize =
-                16,
+                15,
 
             Font =
                 Enum.Font.GothamBold,
@@ -537,27 +751,35 @@ Title.Parent =
     Topbar
 
 local Subtitle =
-    new(
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(53, 26),
+                UDim2.fromOffset(
+                    50,
+                    24
+                ),
 
             Size =
-                UDim2.new(1, -115, 0, 14),
+                UDim2.new(
+                    1,
+                    -110,
+                    0,
+                    13
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "BLOX FRUITS  •  "
+                "BLOX FRUITS • "
                 .. CurrentSea,
 
             TextColor3 =
                 Theme.Gold,
 
             TextSize =
-                9,
+                8,
 
             Font =
                 Enum.Font.GothamMedium,
@@ -571,21 +793,32 @@ Subtitle.Parent =
     Topbar
 
 ------------------------------------------------------------
--- Close / Hide button
+-- Close button
 ------------------------------------------------------------
 
 local Close =
-    new(
+    New(
         "TextButton",
         {
             AnchorPoint =
-                Vector2.new(1, 0.5),
+                Vector2.new(
+                    1,
+                    0.5
+                ),
 
             Position =
-                UDim2.new(1, -12, 0.5, 0),
+                UDim2.new(
+                    1,
+                    -10,
+                    0.5,
+                    0
+                ),
 
             Size =
-                UDim2.fromOffset(28, 28),
+                UDim2.fromOffset(
+                    27,
+                    27
+                ),
 
             BackgroundColor3 =
                 Theme.Red,
@@ -613,24 +846,32 @@ local Close =
 Close.Parent =
     Topbar
 
-corner(Close, 7)
+Corner(
+    Close,
+    7
+)
 
 ------------------------------------------------------------
 -- Body
 ------------------------------------------------------------
 
 local Body =
-    new(
+    New(
         "Frame",
         {
-            Name =
-                "Body",
-
             Position =
-                UDim2.fromOffset(0, 52),
+                UDim2.fromOffset(
+                    0,
+                    49
+                ),
 
             Size =
-                UDim2.new(1, 0, 1, -52),
+                UDim2.new(
+                    1,
+                    0,
+                    1,
+                    -49
+                ),
 
             BackgroundTransparency =
                 1,
@@ -645,10 +886,10 @@ Body.Parent =
 ------------------------------------------------------------
 
 local SidebarWidth =
-    132
+    125
 
 local Sidebar =
-    new(
+    New(
         "Frame",
         {
             Name =
@@ -673,22 +914,31 @@ local Sidebar =
 Sidebar.Parent =
     Body
 
-------------------------------------------------------------
--- Sidebar divider
-------------------------------------------------------------
-
 local Divider =
-    new(
+    New(
         "Frame",
         {
             AnchorPoint =
-                Vector2.new(1, 0),
+                Vector2.new(
+                    1,
+                    0
+                ),
 
             Position =
-                UDim2.new(1, 0, 0, 0),
+                UDim2.new(
+                    1,
+                    0,
+                    0,
+                    0
+                ),
 
             Size =
-                UDim2.new(0, 1, 1, 0),
+                UDim2.new(
+                    0,
+                    1,
+                    1,
+                    0
+                ),
 
             BackgroundColor3 =
                 Theme.GoldSoft,
@@ -705,18 +955,26 @@ Divider.Parent =
     Sidebar
 
 ------------------------------------------------------------
--- Navigation title
+-- Navigation header
 ------------------------------------------------------------
 
-local NavTitle =
-    new(
+local NavHeader =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(13, 14),
+                UDim2.fromOffset(
+                    12,
+                    12
+                ),
 
             Size =
-                UDim2.new(1, -26, 0, 14),
+                UDim2.new(
+                    1,
+                    -24,
+                    0,
+                    14
+                ),
 
             BackgroundTransparency =
                 1,
@@ -738,51 +996,62 @@ local NavTitle =
         }
     )
 
-NavTitle.Parent =
+NavHeader.Parent =
     Sidebar
 
 ------------------------------------------------------------
--- Home tab placeholder
+-- Home tab
 ------------------------------------------------------------
 
 local Home =
-    new(
-        "TextButton",
+    New(
+        "Frame",
         {
             Position =
-                UDim2.fromOffset(9, 37),
+                UDim2.fromOffset(
+                    8,
+                    35
+                ),
 
             Size =
-                UDim2.new(1, -18, 0, 34),
+                UDim2.new(
+                    1,
+                    -16,
+                    0,
+                    33
+                ),
 
             BackgroundColor3 =
                 Theme.SurfaceRaised,
 
             BorderSizePixel =
                 0,
-
-            AutoButtonColor =
-                false,
-
-            Text =
-                "",
         }
     )
 
 Home.Parent =
     Sidebar
 
-corner(Home, 7)
+Corner(
+    Home,
+    7
+)
 
 local HomeAccent =
-    new(
+    New(
         "Frame",
         {
             Position =
-                UDim2.fromOffset(0, 7),
+                UDim2.fromOffset(
+                    0,
+                    7
+                ),
 
             Size =
-                UDim2.fromOffset(3, 20),
+                UDim2.fromOffset(
+                    3,
+                    19
+                ),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -795,17 +1064,28 @@ local HomeAccent =
 HomeAccent.Parent =
     Home
 
-corner(HomeAccent, 3)
+Corner(
+    HomeAccent,
+    3
+)
 
-local HomeLabel =
-    new(
+local HomeText =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(14, 0),
+                UDim2.fromOffset(
+                    13,
+                    0
+                ),
 
             Size =
-                UDim2.new(1, -14, 1, 0),
+                UDim2.new(
+                    1,
+                    -13,
+                    1,
+                    0
+                ),
 
             BackgroundTransparency =
                 1,
@@ -817,7 +1097,7 @@ local HomeLabel =
                 Theme.Text,
 
             TextSize =
-                11,
+                10,
 
             Font =
                 Enum.Font.GothamSemibold,
@@ -827,31 +1107,44 @@ local HomeLabel =
         }
     )
 
-HomeLabel.Parent =
+HomeText.Parent =
     Home
 
 ------------------------------------------------------------
--- Key hint
+-- RightShift hint
 ------------------------------------------------------------
 
 local KeyHint =
-    new(
+    New(
         "TextLabel",
         {
             AnchorPoint =
-                Vector2.new(0, 1),
+                Vector2.new(
+                    0,
+                    1
+                ),
 
             Position =
-                UDim2.new(0, 13, 1, -12),
+                UDim2.new(
+                    0,
+                    12,
+                    1,
+                    -10
+                ),
 
             Size =
-                UDim2.new(1, -26, 0, 30),
+                UDim2.new(
+                    1,
+                    -24,
+                    0,
+                    28
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "RIGHT SHIFT\nToggle XenOS",
+                "RIGHT SHIFT\nShow / Hide",
 
             TextColor3 =
                 Theme.TextMuted,
@@ -878,7 +1171,7 @@ KeyHint.Parent =
 ------------------------------------------------------------
 
 local Content =
-    new(
+    New(
         "Frame",
         {
             Name =
@@ -907,30 +1200,38 @@ Content.Parent =
     Body
 
 ------------------------------------------------------------
--- Header
+-- Content title
 ------------------------------------------------------------
 
-local Welcome =
-    new(
+local ContentTitle =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(20, 19),
+                UDim2.fromOffset(
+                    18,
+                    16
+                ),
 
             Size =
-                UDim2.new(1, -40, 0, 24),
+                UDim2.new(
+                    1,
+                    -36,
+                    0,
+                    24
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "Welcome aboard.",
+                "Main",
 
             TextColor3 =
                 Theme.Text,
 
             TextSize =
-                18,
+                17,
 
             Font =
                 Enum.Font.GothamBold,
@@ -940,31 +1241,38 @@ local Welcome =
         }
     )
 
-Welcome.Parent =
+ContentTitle.Parent =
     Content
 
-local WelcomeSub =
-    new(
+local ContentSubtitle =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(21, 45),
+                UDim2.fromOffset(
+                    19,
+                    39
+                ),
 
             Size =
-                UDim2.new(1, -42, 0, 18),
+                UDim2.new(
+                    1,
+                    -38,
+                    0,
+                    17
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                CurrentSea
-                .. " connected successfully.",
+                "Blox Fruits automation",
 
             TextColor3 =
                 Theme.TextMuted,
 
             TextSize =
-                10,
+                9,
 
             Font =
                 Enum.Font.Gotham,
@@ -974,22 +1282,30 @@ local WelcomeSub =
         }
     )
 
-WelcomeSub.Parent =
+ContentSubtitle.Parent =
     Content
 
 ------------------------------------------------------------
--- Compact status card
+-- Auto Chest feature card
 ------------------------------------------------------------
 
-local StatusCard =
-    new(
+local ChestCard =
+    New(
         "Frame",
         {
             Position =
-                UDim2.fromOffset(20, 80),
+                UDim2.fromOffset(
+                    18,
+                    70
+                ),
 
             Size =
-                UDim2.new(1, -40, 0, 91),
+                UDim2.new(
+                    1,
+                    -36,
+                    0,
+                    94
+                ),
 
             BackgroundColor3 =
                 Theme.SurfaceRaised,
@@ -999,92 +1315,54 @@ local StatusCard =
         }
     )
 
-StatusCard.Parent =
+ChestCard.Parent =
     Content
 
-corner(StatusCard, 8)
+Corner(
+    ChestCard,
+    8
+)
 
-stroke(
-    StatusCard,
+Stroke(
+    ChestCard,
     Theme.Ocean,
     1,
-    0.55
+    0.6
 )
 
 ------------------------------------------------------------
--- Status side accent
+-- Feature title
 ------------------------------------------------------------
 
-local StatusAccent =
-    new(
-        "Frame",
-        {
-            Size =
-                UDim2.new(0, 4, 1, 0),
-
-            BackgroundColor3 =
-                Theme.OceanBright,
-
-            BorderSizePixel =
-                0,
-        }
-    )
-
-StatusAccent.Parent =
-    StatusCard
-
-------------------------------------------------------------
--- Status dot
-------------------------------------------------------------
-
-local StatusDot =
-    new(
-        "Frame",
-        {
-            Position =
-                UDim2.fromOffset(17, 17),
-
-            Size =
-                UDim2.fromOffset(8, 8),
-
-            BackgroundColor3 =
-                Theme.Green,
-
-            BorderSizePixel =
-                0,
-        }
-    )
-
-StatusDot.Parent =
-    StatusCard
-
-corner(StatusDot, 8)
-
-------------------------------------------------------------
--- Status title
-------------------------------------------------------------
-
-local StatusTitle =
-    new(
+local ChestTitle =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(34, 10),
+                UDim2.fromOffset(
+                    14,
+                    10
+                ),
 
             Size =
-                UDim2.new(1, -45, 0, 22),
+                UDim2.new(
+                    1,
+                    -75,
+                    0,
+                    20
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "Game module ready",
+                "Auto Farm Chest",
 
             TextColor3 =
                 Theme.Text,
 
             TextSize =
-                13,
+                12,
 
             Font =
                 Enum.Font.GothamSemibold,
@@ -1094,28 +1372,36 @@ local StatusTitle =
         }
     )
 
-StatusTitle.Parent =
-    StatusCard
+ChestTitle.Parent =
+    ChestCard
 
 ------------------------------------------------------------
--- Status description
+-- Feature description
 ------------------------------------------------------------
 
-local StatusText =
-    new(
+local ChestDescription =
+    New(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(17, 38),
+                UDim2.fromOffset(
+                    14,
+                    32
+                ),
 
             Size =
-                UDim2.new(1, -34, 0, 38),
+                UDim2.new(
+                    1,
+                    -28,
+                    0,
+                    28
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "XenOS is ready. Features will appear here.",
+                "Moves between available map chests automatically.",
 
             TextColor3 =
                 Theme.TextMuted,
@@ -1137,32 +1423,179 @@ local StatusText =
         }
     )
 
-StatusText.Parent =
-    StatusCard
+ChestDescription.Parent =
+    ChestCard
 
 ------------------------------------------------------------
--- Footer status
+-- Farm status
 ------------------------------------------------------------
 
-local Footer =
-    new(
+local FarmStatus =
+    New(
         "TextLabel",
         {
-            AnchorPoint =
-                Vector2.new(0, 1),
-
             Position =
-                UDim2.new(0, 21, 1, -13),
+                UDim2.fromOffset(
+                    14,
+                    68
+                ),
 
             Size =
-                UDim2.new(1, -42, 0, 17),
+                UDim2.new(
+                    1,
+                    -28,
+                    0,
+                    15
+                ),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "XenOS v0.2  •  "
-                .. tostring(game.PlaceId),
+                "Status: Disabled",
+
+            TextColor3 =
+                Theme.TextMuted,
+
+            TextSize =
+                8,
+
+            Font =
+                Enum.Font.Code,
+
+            TextXAlignment =
+                Enum.TextXAlignment.Left,
+        }
+    )
+
+FarmStatus.Parent =
+    ChestCard
+
+------------------------------------------------------------
+-- Toggle
+------------------------------------------------------------
+
+local ToggleButton =
+    New(
+        "TextButton",
+        {
+            AnchorPoint =
+                Vector2.new(
+                    1,
+                    0
+                ),
+
+            Position =
+                UDim2.new(
+                    1,
+                    -12,
+                    0,
+                    11
+                ),
+
+            Size =
+                UDim2.fromOffset(
+                    42,
+                    22
+                ),
+
+            BackgroundColor3 =
+                Theme.Surface,
+
+            BorderSizePixel =
+                0,
+
+            AutoButtonColor =
+                false,
+
+            Text =
+                "",
+        }
+    )
+
+ToggleButton.Parent =
+    ChestCard
+
+Corner(
+    ToggleButton,
+    20
+)
+
+local ToggleKnob =
+    New(
+        "Frame",
+        {
+            AnchorPoint =
+                Vector2.new(
+                    0,
+                    0.5
+                ),
+
+            Position =
+                UDim2.new(
+                    0,
+                    3,
+                    0.5,
+                    0
+                ),
+
+            Size =
+                UDim2.fromOffset(
+                    16,
+                    16
+                ),
+
+            BackgroundColor3 =
+                Theme.TextMuted,
+
+            BorderSizePixel =
+                0,
+        }
+    )
+
+ToggleKnob.Parent =
+    ToggleButton
+
+Corner(
+    ToggleKnob,
+    20
+)
+
+------------------------------------------------------------
+-- Footer
+------------------------------------------------------------
+
+local Footer =
+    New(
+        "TextLabel",
+        {
+            AnchorPoint =
+                Vector2.new(
+                    0,
+                    1
+                ),
+
+            Position =
+                UDim2.new(
+                    0,
+                    19,
+                    1,
+                    -11
+                ),
+
+            Size =
+                UDim2.new(
+                    1,
+                    -38,
+                    0,
+                    15
+                ),
+
+            BackgroundTransparency =
+                1,
+
+            Text =
+                "XenOS • Blox Fruits • v0.3",
 
             TextColor3 =
                 Theme.TextMuted,
@@ -1182,19 +1615,779 @@ Footer.Parent =
     Content
 
 ------------------------------------------------------------
--- Draggable window
+-- Status helper
 ------------------------------------------------------------
 
-local dragging =
+local function SetFarmStatus(text)
+
+    FarmStatus.Text =
+        "Status: "
+        .. tostring(text)
+
+end
+
+------------------------------------------------------------
+-- Chest helpers
+------------------------------------------------------------
+
+local function IsChestName(name)
+
+    if type(name) ~= "string" then
+        return false
+    end
+
+    return name:match(
+        "^Chest%d+$"
+    ) ~= nil
+end
+
+------------------------------------------------------------
+-- Resolve chest position part
+------------------------------------------------------------
+
+local function GetChestPart(chest)
+
+    if not chest then
+        return nil
+    end
+
+    --------------------------------------------------------
+    -- Direct BasePart
+    ------------------------------------------------------------
+
+    if chest:IsA("BasePart") then
+        return chest
+    end
+
+    --------------------------------------------------------
+    -- Model support
+    ------------------------------------------------------------
+
+    if chest:IsA("Model") then
+
+        if chest.PrimaryPart then
+            return chest.PrimaryPart
+        end
+
+        return chest:FindFirstChildWhichIsA(
+            "BasePart",
+            true
+        )
+    end
+
+    --------------------------------------------------------
+    -- Fallback for other containers
+    ------------------------------------------------------------
+
+    return chest:FindFirstChildWhichIsA(
+        "BasePart",
+        true
+    )
+end
+
+------------------------------------------------------------
+-- Find all chest objects
+------------------------------------------------------------
+
+local function FindChests()
+
+    local results =
+        {}
+
+    local map =
+        Workspace:FindFirstChild(
+            "Map"
+        )
+
+    if not map then
+        return results
+    end
+
+    --------------------------------------------------------
+    -- Expected:
+    --
+    -- Map
+    -- └── ModelName
+    --     └── Chests
+    ------------------------------------------------------------
+
+    for _, model
+        in ipairs(map:GetChildren())
+    do
+
+        local chestFolder =
+            model:FindFirstChild(
+                "Chests"
+            )
+
+        if chestFolder then
+
+            for _, chest
+                in ipairs(
+                    chestFolder:GetChildren()
+                )
+            do
+
+                if IsChestName(
+                    chest.Name
+                ) then
+
+                    local part =
+                        GetChestPart(
+                            chest
+                        )
+
+                    if part then
+
+                        table.insert(
+                            results,
+                            chest
+                        )
+
+                    end
+
+                end
+            end
+
+        end
+    end
+
+    return results
+end
+
+------------------------------------------------------------
+-- Find nearest chest
+------------------------------------------------------------
+
+local function FindNearestChest()
+
+    local root =
+        GetRootPart()
+
+    if not root then
+        return nil
+    end
+
+    local nearest =
+        nil
+
+    local nearestDistance =
+        math.huge
+
+    for _, chest
+        in ipairs(FindChests())
+    do
+
+        if chest ~= CurrentChest then
+
+            local chestPart =
+                GetChestPart(
+                    chest
+                )
+
+            if chestPart then
+
+                local distance =
+                    (
+                        root.Position
+                        - chestPart.Position
+                    ).Magnitude
+
+                if distance < nearestDistance then
+
+                    nearestDistance =
+                        distance
+
+                    nearest =
+                        chest
+
+                end
+
+            end
+
+        end
+
+    end
+
+    return nearest
+end
+
+------------------------------------------------------------
+-- Remember the chest's original children
+------------------------------------------------------------
+
+local function SnapshotChestChildren(
+    chest
+)
+
+    local snapshot =
+        {}
+
+    if not chest then
+        return snapshot
+    end
+
+    for _, child
+        in ipairs(chest:GetChildren())
+    do
+
+        table.insert(
+            snapshot,
+            child
+        )
+
+    end
+
+    return snapshot
+end
+
+------------------------------------------------------------
+-- Determine whether selected chest has been collected
+------------------------------------------------------------
+
+local function ChestCollected(
+    chest,
+    originalChildren
+)
+
+    --------------------------------------------------------
+    -- Chest itself disappeared
+    ------------------------------------------------------------
+
+    if not chest then
+        return true
+    end
+
+    if not chest.Parent then
+        return true
+    end
+
+    --------------------------------------------------------
+    -- If the chest originally contained children,
+    -- determine whether ALL original children have
+    -- disappeared from that chest.
+    ------------------------------------------------------------
+
+    if #originalChildren > 0 then
+
+        for _, child
+            in ipairs(originalChildren)
+        do
+
+            if
+                child
+                and child.Parent
+                and child:IsDescendantOf(chest)
+            then
+
+                return false
+            end
+
+        end
+
+        return true
+    end
+
+    --------------------------------------------------------
+    -- No original children existed.
+    --
+    -- In this case we can only positively identify
+    -- collection if the chest object itself disappears.
+    ------------------------------------------------------------
+
+    return false
+end
+
+------------------------------------------------------------
+-- Cancel active tween
+------------------------------------------------------------
+
+local function CancelCurrentTween()
+
+    if CurrentTween then
+
+        pcall(function()
+            CurrentTween:Cancel()
+        end)
+
+        CurrentTween =
+            nil
+
+    end
+
+end
+
+------------------------------------------------------------
+-- Move to chest and wait for collection
+------------------------------------------------------------
+
+local function TweenToChest(
+    chest,
+    generation
+)
+
+    if
+        not AutoFarmChest
+        or Destroyed
+        or generation ~= FarmGeneration
+    then
+
+        return false
+    end
+
+    local root =
+        GetRootPart()
+
+    local chestPart =
+        GetChestPart(
+            chest
+        )
+
+    if
+        not root
+        or not chestPart
+    then
+
+        return false
+    end
+
+    --------------------------------------------------------
+    -- Track exactly what this chest contained when
+    -- we selected it.
+    ------------------------------------------------------------
+
+    local originalChildren =
+        SnapshotChestChildren(
+            chest
+        )
+
+    CurrentChest =
+        chest
+
+    SetFarmStatus(
+        "Moving to "
+        .. chest.Name
+    )
+
+    --------------------------------------------------------
+    -- Destination
+    ------------------------------------------------------------
+
+    local targetCFrame =
+        chestPart.CFrame
+        + Config.ChestOffset
+
+    local distance =
+        (
+            root.Position
+            - targetCFrame.Position
+        ).Magnitude
+
+    local duration =
+        distance
+        / Config.ChestTweenSpeed
+
+    duration =
+        math.max(
+            duration,
+            0.05
+        )
+
+    --------------------------------------------------------
+    -- Tween
+    ------------------------------------------------------------
+
+    local tween =
+        TweenService:Create(
+            root,
+
+            TweenInfo.new(
+                duration,
+                Enum.EasingStyle.Linear,
+                Enum.EasingDirection.Out
+            ),
+
+            {
+                CFrame =
+                    targetCFrame
+            }
+        )
+
+    CurrentTween =
+        tween
+
+    tween:Play()
+
+    --------------------------------------------------------
+    -- Watch chest while moving
+    ------------------------------------------------------------
+
+    while
+        AutoFarmChest
+        and not Destroyed
+        and generation == FarmGeneration
+    do
+
+        ----------------------------------------------------
+        -- Chest was collected during movement
+        ----------------------------------------------------
+
+        if ChestCollected(
+            chest,
+            originalChildren
+        ) then
+
+            CancelCurrentTween()
+
+            SetFarmStatus(
+                chest.Name
+                .. " collected"
+            )
+
+            CurrentChest =
+                nil
+
+            return true
+        end
+
+        ----------------------------------------------------
+        -- Target part itself vanished
+        ----------------------------------------------------
+
+        chestPart =
+            GetChestPart(
+                chest
+            )
+
+        if not chestPart then
+
+            CancelCurrentTween()
+
+            CurrentChest =
+                nil
+
+            return true
+        end
+
+        ----------------------------------------------------
+        -- Check whether tween finished
+        ----------------------------------------------------
+
+        if
+            tween.PlaybackState
+                == Enum.PlaybackState.Completed
+        then
+
+            break
+        end
+
+        task.wait(
+            0.05
+        )
+    end
+
+    --------------------------------------------------------
+    -- Feature disabled during tween
+    ------------------------------------------------------------
+
+    if
+        not AutoFarmChest
+        or Destroyed
+        or generation ~= FarmGeneration
+    then
+
+        CancelCurrentTween()
+
+        CurrentChest =
+            nil
+
+        return false
+    end
+
+    --------------------------------------------------------
+    -- Tween finished.
+    --
+    -- Now remain on this chest until its children are
+    -- deleted. We do NOT move to another chest early.
+    ------------------------------------------------------------
+
+    SetFarmStatus(
+        "Waiting for "
+        .. chest.Name
+    )
+
+    while
+        AutoFarmChest
+        and not Destroyed
+        and generation == FarmGeneration
+    do
+
+        if ChestCollected(
+            chest,
+            originalChildren
+        ) then
+
+            CancelCurrentTween()
+
+            SetFarmStatus(
+                chest.Name
+                .. " collected"
+            )
+
+            CurrentChest =
+                nil
+
+            return true
+        end
+
+        task.wait(
+            0.05
+        )
+    end
+
+    CancelCurrentTween()
+
+    CurrentChest =
+        nil
+
+    return false
+end
+
+------------------------------------------------------------
+-- Auto Farm loop
+------------------------------------------------------------
+
+local function StartAutoFarmChest()
+
+    --------------------------------------------------------
+    -- Increment generation so an older farm task cannot
+    -- continue running after a restart.
+    ------------------------------------------------------------
+
+    FarmGeneration += 1
+
+    local generation =
+        FarmGeneration
+
+    task.spawn(function()
+
+        while
+            AutoFarmChest
+            and not Destroyed
+            and generation == FarmGeneration
+        do
+
+            ------------------------------------------------
+            -- Character may be respawning
+            ------------------------------------------------
+
+            local root =
+                GetRootPart()
+
+            if not root then
+
+                SetFarmStatus(
+                    "Waiting for character"
+                )
+
+                task.wait(
+                    0.5
+                )
+
+                continue
+            end
+
+            ------------------------------------------------
+            -- Find chest
+            ------------------------------------------------
+
+            local chest =
+                FindNearestChest()
+
+            if not chest then
+
+                SetFarmStatus(
+                    "Searching for chests"
+                )
+
+                task.wait(
+                    0.5
+                )
+
+                continue
+            end
+
+            ------------------------------------------------
+            -- Travel + wait for collection
+            ------------------------------------------------
+
+            TweenToChest(
+                chest,
+                generation
+            )
+
+            ------------------------------------------------
+            -- Tiny delay before finding next chest
+            ------------------------------------------------
+
+            task.wait(
+                Config.RescanDelay
+            )
+        end
+
+        ----------------------------------------------------
+        -- Only update UI if this is still the current farm
+        ----------------------------------------------------
+
+        if
+            not Destroyed
+            and generation == FarmGeneration
+            and not AutoFarmChest
+        then
+
+            SetFarmStatus(
+                "Disabled"
+            )
+
+        end
+
+    end)
+end
+
+------------------------------------------------------------
+-- Stop Auto Farm
+------------------------------------------------------------
+
+local function StopAutoFarmChest()
+
+    AutoFarmChest =
+        false
+
+    FarmGeneration += 1
+
+    CancelCurrentTween()
+
+    CurrentChest =
+        nil
+
+    SetFarmStatus(
+        "Disabled"
+    )
+end
+
+------------------------------------------------------------
+-- Update toggle visuals
+------------------------------------------------------------
+
+local function UpdateToggle()
+
+    if AutoFarmChest then
+
+        TweenService:Create(
+            ToggleButton,
+            TweenInfo.new(0.15),
+            {
+                BackgroundColor3 =
+                    Theme.Ocean
+            }
+        ):Play()
+
+        TweenService:Create(
+            ToggleKnob,
+            TweenInfo.new(0.15),
+            {
+                Position =
+                    UDim2.new(
+                        1,
+                        -19,
+                        0.5,
+                        0
+                    ),
+
+                BackgroundColor3 =
+                    Theme.Text
+            }
+        ):Play()
+
+    else
+
+        TweenService:Create(
+            ToggleButton,
+            TweenInfo.new(0.15),
+            {
+                BackgroundColor3 =
+                    Theme.Surface
+            }
+        ):Play()
+
+        TweenService:Create(
+            ToggleKnob,
+            TweenInfo.new(0.15),
+            {
+                Position =
+                    UDim2.new(
+                        0,
+                        3,
+                        0.5,
+                        0
+                    ),
+
+                BackgroundColor3 =
+                    Theme.TextMuted
+            }
+        ):Play()
+
+    end
+end
+
+------------------------------------------------------------
+-- Toggle Auto Chest
+------------------------------------------------------------
+
+Connect(
+    ToggleButton.MouseButton1Click,
+
+    function()
+
+        AutoFarmChest =
+            not AutoFarmChest
+
+        UpdateToggle()
+
+        if AutoFarmChest then
+
+            SetFarmStatus(
+                "Starting"
+            )
+
+            StartAutoFarmChest()
+
+        else
+
+            StopAutoFarmChest()
+
+        end
+
+    end
+)
+
+------------------------------------------------------------
+-- Draggable UI
+------------------------------------------------------------
+
+local Dragging =
     false
 
-local dragInput
+local DragInput =
+    nil
 
-local dragStart
+local DragStart =
+    nil
 
-local startPosition
+local StartPosition =
+    nil
 
-connect(
+Connect(
     Topbar.InputBegan,
 
     function(input)
@@ -1203,42 +2396,27 @@ connect(
             input.UserInputType
                 == Enum.UserInputType.MouseButton1
 
-            or input.UserInputType
+            or
+
+            input.UserInputType
                 == Enum.UserInputType.Touch
         then
 
-            dragging =
+            Dragging =
                 true
 
-            dragStart =
+            DragStart =
                 input.Position
 
-            startPosition =
+            StartPosition =
                 Main.Position
 
-            local endConnection
-
-            endConnection =
-                input.Changed:Connect(function()
-
-                    if
-                        input.UserInputState
-                            == Enum.UserInputState.End
-                    then
-
-                        dragging =
-                            false
-
-                        if endConnection then
-                            endConnection:Disconnect()
-                        end
-                    end
-                end)
         end
+
     end
 )
 
-connect(
+Connect(
     Topbar.InputChanged,
 
     function(input)
@@ -1247,97 +2425,135 @@ connect(
             input.UserInputType
                 == Enum.UserInputType.MouseMovement
 
-            or input.UserInputType
+            or
+
+            input.UserInputType
                 == Enum.UserInputType.Touch
         then
 
-            dragInput =
+            DragInput =
                 input
+
         end
+
     end
 )
 
-connect(
+Connect(
     UserInputService.InputChanged,
 
     function(input)
 
         if
-            input == dragInput
-            and dragging
+            Dragging
+            and input == DragInput
         then
 
             local delta =
                 input.Position
-                - dragStart
+                - DragStart
 
             Main.Position =
                 UDim2.new(
 
-                    startPosition.X.Scale,
-                    startPosition.X.Offset
+                    StartPosition.X.Scale,
+                    StartPosition.X.Offset
                         + delta.X,
 
-                    startPosition.Y.Scale,
-                    startPosition.Y.Offset
+                    StartPosition.Y.Scale,
+                    StartPosition.Y.Offset
                         + delta.Y
                 )
+
         end
+
+    end
+)
+
+Connect(
+    UserInputService.InputEnded,
+
+    function(input)
+
+        if
+            input.UserInputType
+                == Enum.UserInputType.MouseButton1
+
+            or
+
+            input.UserInputType
+                == Enum.UserInputType.Touch
+        then
+
+            Dragging =
+                false
+
+        end
+
     end
 )
 
 ------------------------------------------------------------
--- Toggle state
+-- Show / Hide
 ------------------------------------------------------------
 
-local visible =
+local Visible =
     true
 
 local function SetVisible(state)
 
-    visible =
+    Visible =
         state
 
     ScreenGui.Enabled =
         state
+
 end
 
-local function Toggle()
+local function ToggleVisible()
 
     SetVisible(
-        not visible
+        not Visible
     )
 end
 
 ------------------------------------------------------------
--- RIGHT SHIFT TOGGLE
+-- Right Shift
 ------------------------------------------------------------
 
-connect(
+Connect(
     UserInputService.InputBegan,
 
-    function(input)
+    function(
+        input,
+        gameProcessed
+    )
 
         if
             input.KeyCode
                 == Enum.KeyCode.RightShift
         then
 
-            Toggle()
+            ToggleVisible()
+
         end
+
     end
 )
 
 ------------------------------------------------------------
--- Close button = hide
+-- Close = Hide
 ------------------------------------------------------------
 
-connect(
+Connect(
     Close.MouseButton1Click,
 
     function()
 
-        SetVisible(false)
+        SetVisible(
+            false
+        )
+
     end
 )
 
@@ -1345,7 +2561,7 @@ connect(
 -- Close hover
 ------------------------------------------------------------
 
-connect(
+Connect(
     Close.MouseEnter,
 
     function()
@@ -1358,10 +2574,11 @@ connect(
                     Theme.RedHover
             }
         ):Play()
+
     end
 )
 
-connect(
+Connect(
     Close.MouseLeave,
 
     function()
@@ -1374,26 +2591,22 @@ connect(
                     Theme.Red
             }
         ):Play()
+
     end
 )
 
 ------------------------------------------------------------
--- Public UI API
+-- Public XenOS API
 ------------------------------------------------------------
 
-local UI = {}
+local UI =
+    {}
 
 UI.ScreenGui =
     ScreenGui
 
 UI.Main =
     Main
-
-UI.Topbar =
-    Topbar
-
-UI.Sidebar =
-    Sidebar
 
 UI.Content =
     Content
@@ -1405,21 +2618,15 @@ UI.Sea =
     CurrentSea
 
 ------------------------------------------------------------
--- Toggle
-------------------------------------------------------------
-
-function UI:Toggle()
-
-    Toggle()
-end
-
-------------------------------------------------------------
 -- Show
 ------------------------------------------------------------
 
 function UI:Show()
 
-    SetVisible(true)
+    SetVisible(
+        true
+    )
+
 end
 
 ------------------------------------------------------------
@@ -1428,7 +2635,20 @@ end
 
 function UI:Hide()
 
-    SetVisible(false)
+    SetVisible(
+        false
+    )
+
+end
+
+------------------------------------------------------------
+-- Toggle
+------------------------------------------------------------
+
+function UI:Toggle()
+
+    ToggleVisible()
+
 end
 
 ------------------------------------------------------------
@@ -1437,33 +2657,53 @@ end
 
 function UI:IsVisible()
 
-    return visible
+    return Visible
+
 end
 
 ------------------------------------------------------------
--- Status update
+-- Auto Farm Chest API
 ------------------------------------------------------------
 
-function UI:SetStatus(
-    title,
-    description,
-    color
-)
+function UI:SetAutoFarmChest(state)
 
-    if title ~= nil then
-        StatusTitle.Text =
-            tostring(title)
+    state =
+        state == true
+
+    if
+        state
+        == AutoFarmChest
+    then
+
+        return
+
     end
 
-    if description ~= nil then
-        StatusText.Text =
-            tostring(description)
+    AutoFarmChest =
+        state
+
+    UpdateToggle()
+
+    if AutoFarmChest then
+
+        StartAutoFarmChest()
+
+    else
+
+        StopAutoFarmChest()
+
     end
 
-    if color ~= nil then
-        StatusDot.BackgroundColor3 =
-            color
-    end
+end
+
+------------------------------------------------------------
+-- Get selected chest
+------------------------------------------------------------
+
+function UI:GetCurrentChest()
+
+    return CurrentChest
+
 end
 
 ------------------------------------------------------------
@@ -1472,21 +2712,41 @@ end
 
 function UI:Destroy()
 
+    if Destroyed then
+        return
+    end
+
+    Destroyed =
+        true
+
     --------------------------------------------------------
-    -- Disconnect EVERY event connection created by
-    -- this execution.
+    -- Stop feature
     --------------------------------------------------------
 
-    for _, connection in ipairs(
-        Connections
-    ) do
+    StopAutoFarmChest()
+
+    --------------------------------------------------------
+    -- Cancel tween
+    --------------------------------------------------------
+
+    CancelCurrentTween()
+
+    --------------------------------------------------------
+    -- Disconnect events
+    --------------------------------------------------------
+
+    for _, connection
+        in ipairs(Connections)
+    do
 
         pcall(function()
 
             if connection.Connected then
                 connection:Disconnect()
             end
+
         end)
+
     end
 
     table.clear(
@@ -1494,35 +2754,49 @@ function UI:Destroy()
     )
 
     --------------------------------------------------------
-    -- Destroy GUI
+    -- Destroy UI
     --------------------------------------------------------
 
     if ScreenGui then
+
         pcall(function()
             ScreenGui:Destroy()
         end)
+
     end
 
     --------------------------------------------------------
-    -- Remove global reference
+    -- Remove global pointer
     --------------------------------------------------------
 
     if
         ENV.XenOS.BloxFruitsUI
-            == UI
+        == UI
     then
 
         ENV.XenOS.BloxFruitsUI =
             nil
+
     end
+
 end
 
 ------------------------------------------------------------
--- Register current instance
+-- Register current XenOS instance
 ------------------------------------------------------------
 
 ENV.XenOS.BloxFruitsUI =
     UI
+
+------------------------------------------------------------
+-- Initial UI state
+------------------------------------------------------------
+
+UpdateToggle()
+
+SetFarmStatus(
+    "Disabled"
+)
 
 ------------------------------------------------------------
 -- Loaded
@@ -1530,9 +2804,10 @@ ENV.XenOS.BloxFruitsUI =
 
 print(
     "[XenOS/BloxFruits]",
-    "Compact UI loaded |",
+    "v0.3 loaded |",
     CurrentSea,
-    "| RightShift = Toggle"
+    "| Auto Farm Chest ready |",
+    "RightShift = Toggle UI"
 )
 
 return UI
