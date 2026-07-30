@@ -1,20 +1,16 @@
 --[[
     ============================================================
-                  XenOS - Blox Fruits
+                    XenOS - Blox Fruits
     ============================================================
 
-    Place:
-        Blox Fruits
+    UI Foundation v0.2
 
-    Primary PlaceId:
-        2753915549
+    Controls:
+        Right Shift = Show / Hide XenOS
 
-    Shared with:
-        4442272183 - Second Sea
-        7449423635 - Third Sea
-
-    Current stage:
-        UI Foundation
+    Re-executing:
+        Automatically destroys the previous XenOS UI
+        and disconnects its old event connections.
 ]]
 
 ------------------------------------------------------------
@@ -46,16 +42,75 @@ if not Player then
 end
 
 ------------------------------------------------------------
+-- Global XenOS state
+------------------------------------------------------------
+
+local ENV =
+    (getgenv and getgenv())
+    or _G
+
+ENV.XenOS =
+    ENV.XenOS or {}
+
+------------------------------------------------------------
+-- DELETE PREVIOUS VERSION
+------------------------------------------------------------
+
+-- This is important.
+--
+-- Merely destroying the old ScreenGui would NOT necessarily
+-- remove UserInputService connections from an older execution.
+--
+-- So every XenOS game module stores its cleanup function here.
+
+if ENV.XenOS.BloxFruitsUI then
+
+    local old =
+        ENV.XenOS.BloxFruitsUI
+
+    if type(old.Destroy) == "function" then
+        pcall(function()
+            old:Destroy()
+        end)
+    end
+
+    ENV.XenOS.BloxFruitsUI =
+        nil
+end
+
+------------------------------------------------------------
+-- Connection manager
+------------------------------------------------------------
+
+local Connections = {}
+
+local function connect(signal, callback)
+
+    local connection =
+        signal:Connect(callback)
+
+    table.insert(
+        Connections,
+        connection
+    )
+
+    return connection
+end
+
+------------------------------------------------------------
 -- Determine Sea
 ------------------------------------------------------------
 
 local SEA_NAMES = {
 
-    [2753915549] = "FIRST SEA",
+    [2753915549] =
+        "FIRST SEA",
 
-    [4442272183] = "SECOND SEA",
+    [4442272183] =
+        "SECOND SEA",
 
-    [7449423635] = "THIRD SEA",
+    [7449423635] =
+        "THIRD SEA",
 }
 
 local CurrentSea =
@@ -68,65 +123,47 @@ local CurrentSea =
 
 local Theme = {
 
-    -- Main ocean tones
-
     Background =
-        Color3.fromRGB(14, 25, 38),
+        Color3.fromRGB(13, 23, 34),
 
     Surface =
-        Color3.fromRGB(20, 36, 52),
+        Color3.fromRGB(18, 32, 46),
 
     SurfaceRaised =
-        Color3.fromRGB(27, 47, 67),
+        Color3.fromRGB(24, 43, 60),
 
     SurfaceHover =
-        Color3.fromRGB(36, 59, 80),
-
-    --------------------------------------------------------
-    -- Pirate / parchment accents
-    --------------------------------------------------------
+        Color3.fromRGB(32, 55, 75),
 
     Gold =
-        Color3.fromRGB(222, 178, 80),
+        Color3.fromRGB(224, 179, 78),
 
     GoldSoft =
-        Color3.fromRGB(176, 137, 63),
-
-    Cream =
-        Color3.fromRGB(239, 228, 198),
-
-    --------------------------------------------------------
-    -- Blox Fruits inspired ocean blue
-    --------------------------------------------------------
+        Color3.fromRGB(165, 126, 56),
 
     Ocean =
-        Color3.fromRGB(48, 111, 165),
+        Color3.fromRGB(46, 105, 155),
 
     OceanBright =
-        Color3.fromRGB(75, 145, 198),
-
-    --------------------------------------------------------
-    -- Pirate red accent
-    --------------------------------------------------------
+        Color3.fromRGB(69, 137, 191),
 
     Red =
-        Color3.fromRGB(178, 61, 55),
+        Color3.fromRGB(171, 57, 53),
 
     RedHover =
-        Color3.fromRGB(211, 73, 65),
+        Color3.fromRGB(204, 70, 64),
 
-    --------------------------------------------------------
-    -- Text
-    --------------------------------------------------------
+    Green =
+        Color3.fromRGB(83, 184, 116),
 
     Text =
-        Color3.fromRGB(244, 240, 227),
+        Color3.fromRGB(243, 239, 226),
 
     TextMuted =
-        Color3.fromRGB(157, 170, 181),
+        Color3.fromRGB(145, 160, 172),
 
     TextDark =
-        Color3.fromRGB(20, 25, 30),
+        Color3.fromRGB(20, 23, 27),
 }
 
 ------------------------------------------------------------
@@ -147,16 +184,16 @@ end
 
 local function corner(object, radius)
 
-    local c =
+    local uiCorner =
         Instance.new("UICorner")
 
-    c.CornerRadius =
-        UDim.new(0, radius or 8)
+    uiCorner.CornerRadius =
+        UDim.new(0, radius or 7)
 
-    c.Parent =
+    uiCorner.Parent =
         object
 
-    return c
+    return uiCorner
 end
 
 local function stroke(
@@ -166,25 +203,25 @@ local function stroke(
     transparency
 )
 
-    local s =
+    local uiStroke =
         Instance.new("UIStroke")
 
-    s.Color =
+    uiStroke.Color =
         color or Theme.GoldSoft
 
-    s.Thickness =
+    uiStroke.Thickness =
         thickness or 1
 
-    s.Transparency =
+    uiStroke.Transparency =
         transparency or 0
 
-    s.ApplyStrokeMode =
+    uiStroke.ApplyStrokeMode =
         Enum.ApplyStrokeMode.Border
 
-    s.Parent =
+    uiStroke.Parent =
         object
 
-    return s
+    return uiStroke
 end
 
 ------------------------------------------------------------
@@ -193,24 +230,18 @@ end
 
 local function resolveUIParent()
 
-    --------------------------------------------------------
-    -- Preferred executor UI container
-    --------------------------------------------------------
-
     if type(gethui) == "function" then
 
         local success, result =
             pcall(gethui)
 
-        if success and typeof(result) == "Instance" then
+        if
+            success
+            and typeof(result) == "Instance"
+        then
             return result
         end
-
     end
-
-    --------------------------------------------------------
-    -- CoreGui fallback
-    --------------------------------------------------------
 
     local success, result =
         pcall(function()
@@ -221,27 +252,31 @@ local function resolveUIParent()
         return result
     end
 
-    --------------------------------------------------------
-    -- PlayerGui fallback
-    --------------------------------------------------------
-
-    return Player:WaitForChild("PlayerGui")
+    return Player:WaitForChild(
+        "PlayerGui"
+    )
 end
 
 local UIParent =
     resolveUIParent()
 
 ------------------------------------------------------------
--- Remove old XenOS UI
+-- HARD DELETE DUPLICATE GUIs
 ------------------------------------------------------------
 
-local old =
-    UIParent:FindFirstChild(
-        "XenOS_BloxFruits"
-    )
+-- Handles older XenOS versions that weren't stored in
+-- ENV.XenOS.BloxFruitsUI.
 
-if old then
-    old:Destroy()
+for _, child in ipairs(
+    UIParent:GetChildren()
+) do
+
+    if
+        child:IsA("ScreenGui")
+        and child.Name == "XenOS_BloxFruits"
+    then
+        child:Destroy()
+    end
 end
 
 ------------------------------------------------------------
@@ -266,6 +301,9 @@ local ScreenGui =
 
             DisplayOrder =
                 1000000,
+
+            Enabled =
+                true,
         }
     )
 
@@ -273,7 +311,7 @@ ScreenGui.Parent =
     UIParent
 
 ------------------------------------------------------------
--- Executor GUI protection
+-- GUI protection if available
 ------------------------------------------------------------
 
 pcall(function()
@@ -281,7 +319,6 @@ pcall(function()
     if syn and syn.protect_gui then
         syn.protect_gui(ScreenGui)
     end
-
 end)
 
 ------------------------------------------------------------
@@ -302,7 +339,7 @@ local Main =
                 UDim2.fromScale(0.5, 0.5),
 
             Size =
-                UDim2.fromOffset(680, 430),
+                UDim2.fromOffset(540, 330),
 
             BackgroundColor3 =
                 Theme.Background,
@@ -318,29 +355,25 @@ local Main =
 Main.Parent =
     ScreenGui
 
-corner(Main, 12)
+corner(Main, 10)
 
-local MainStroke =
-    stroke(
-        Main,
-        Theme.GoldSoft,
-        1,
-        0.15
-    )
+stroke(
+    Main,
+    Theme.GoldSoft,
+    1,
+    0.25
+)
 
 ------------------------------------------------------------
--- Top gold accent
+-- Top accent
 ------------------------------------------------------------
 
 local Accent =
     new(
         "Frame",
         {
-            Name =
-                "Accent",
-
             Size =
-                UDim2.new(1, 0, 0, 4),
+                UDim2.new(1, 0, 0, 3),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -357,8 +390,6 @@ local AccentGradient =
     new(
         "UIGradient",
         {
-            Rotation = 0,
-
             Color =
                 ColorSequence.new({
 
@@ -368,7 +399,7 @@ local AccentGradient =
                     ),
 
                     ColorSequenceKeypoint.new(
-                        0.5,
+                        0.55,
                         Theme.Gold
                     ),
 
@@ -376,7 +407,6 @@ local AccentGradient =
                         1,
                         Theme.OceanBright
                     ),
-
                 })
         }
     )
@@ -396,10 +426,10 @@ local Topbar =
                 "Topbar",
 
             Position =
-                UDim2.fromOffset(0, 4),
+                UDim2.fromOffset(0, 3),
 
             Size =
-                UDim2.new(1, 0, 0, 62),
+                UDim2.new(1, 0, 0, 49),
 
             BackgroundColor3 =
                 Theme.Surface,
@@ -416,21 +446,18 @@ Topbar.Parent =
     Main
 
 ------------------------------------------------------------
--- Logo block
+-- Small logo
 ------------------------------------------------------------
 
 local Logo =
     new(
         "Frame",
         {
-            Name =
-                "Logo",
-
             Position =
-                UDim2.fromOffset(16, 13),
+                UDim2.fromOffset(13, 10),
 
             Size =
-                UDim2.fromOffset(38, 38),
+                UDim2.fromOffset(29, 29),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -443,7 +470,7 @@ local Logo =
 Logo.Parent =
     Topbar
 
-corner(Logo, 9)
+corner(Logo, 7)
 
 local LogoText =
     new(
@@ -462,7 +489,7 @@ local LogoText =
                 Theme.TextDark,
 
             TextSize =
-                24,
+                18,
 
             Font =
                 Enum.Font.GothamBlack,
@@ -480,14 +507,11 @@ local Title =
     new(
         "TextLabel",
         {
-            Name =
-                "Title",
-
             Position =
-                UDim2.fromOffset(67, 10),
+                UDim2.fromOffset(53, 7),
 
             Size =
-                UDim2.new(1, -180, 0, 25),
+                UDim2.new(1, -115, 0, 20),
 
             BackgroundTransparency =
                 1,
@@ -499,32 +523,28 @@ local Title =
                 Theme.Text,
 
             TextSize =
-                20,
-
-            TextXAlignment =
-                Enum.TextXAlignment.Left,
+                16,
 
             Font =
                 Enum.Font.GothamBold,
+
+            TextXAlignment =
+                Enum.TextXAlignment.Left,
         }
     )
 
 Title.Parent =
     Topbar
 
-------------------------------------------------------------
--- Subtitle
-------------------------------------------------------------
-
 local Subtitle =
     new(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(67, 33),
+                UDim2.fromOffset(53, 26),
 
             Size =
-                UDim2.new(1, -180, 0, 18),
+                UDim2.new(1, -115, 0, 14),
 
             BackgroundTransparency =
                 1,
@@ -537,13 +557,13 @@ local Subtitle =
                 Theme.Gold,
 
             TextSize =
-                11,
-
-            TextXAlignment =
-                Enum.TextXAlignment.Left,
+                9,
 
             Font =
                 Enum.Font.GothamMedium,
+
+            TextXAlignment =
+                Enum.TextXAlignment.Left,
         }
     )
 
@@ -551,68 +571,21 @@ Subtitle.Parent =
     Topbar
 
 ------------------------------------------------------------
--- Window controls
+-- Close / Hide button
 ------------------------------------------------------------
-
-local Minimize =
-    new(
-        "TextButton",
-        {
-            Name =
-                "Minimize",
-
-            AnchorPoint =
-                Vector2.new(1, 0.5),
-
-            Position =
-                UDim2.new(1, -58, 0.5, 0),
-
-            Size =
-                UDim2.fromOffset(34, 34),
-
-            BackgroundColor3 =
-                Theme.SurfaceRaised,
-
-            BorderSizePixel =
-                0,
-
-            AutoButtonColor =
-                false,
-
-            Text =
-                "—",
-
-            TextColor3 =
-                Theme.Text,
-
-            TextSize =
-                17,
-
-            Font =
-                Enum.Font.GothamBold,
-        }
-    )
-
-Minimize.Parent =
-    Topbar
-
-corner(Minimize, 7)
 
 local Close =
     new(
         "TextButton",
         {
-            Name =
-                "Close",
-
             AnchorPoint =
                 Vector2.new(1, 0.5),
 
             Position =
-                UDim2.new(1, -16, 0.5, 0),
+                UDim2.new(1, -12, 0.5, 0),
 
             Size =
-                UDim2.fromOffset(34, 34),
+                UDim2.fromOffset(28, 28),
 
             BackgroundColor3 =
                 Theme.Red,
@@ -630,7 +603,7 @@ local Close =
                 Theme.Text,
 
             TextSize =
-                22,
+                18,
 
             Font =
                 Enum.Font.GothamBold,
@@ -641,54 +614,6 @@ Close.Parent =
     Topbar
 
 corner(Close, 7)
-
-------------------------------------------------------------
--- Window button hover
-------------------------------------------------------------
-
-local function buttonHover(
-    button,
-    normal,
-    hover
-)
-
-    button.MouseEnter:Connect(function()
-
-        TweenService:Create(
-            button,
-            TweenInfo.new(0.12),
-            {
-                BackgroundColor3 = hover
-            }
-        ):Play()
-
-    end)
-
-    button.MouseLeave:Connect(function()
-
-        TweenService:Create(
-            button,
-            TweenInfo.new(0.12),
-            {
-                BackgroundColor3 = normal
-            }
-        ):Play()
-
-    end)
-
-end
-
-buttonHover(
-    Minimize,
-    Theme.SurfaceRaised,
-    Theme.SurfaceHover
-)
-
-buttonHover(
-    Close,
-    Theme.Red,
-    Theme.RedHover
-)
 
 ------------------------------------------------------------
 -- Body
@@ -702,10 +627,10 @@ local Body =
                 "Body",
 
             Position =
-                UDim2.fromOffset(0, 66),
+                UDim2.fromOffset(0, 52),
 
             Size =
-                UDim2.new(1, 0, 1, -66),
+                UDim2.new(1, 0, 1, -52),
 
             BackgroundTransparency =
                 1,
@@ -719,6 +644,9 @@ Body.Parent =
 -- Sidebar
 ------------------------------------------------------------
 
+local SidebarWidth =
+    132
+
 local Sidebar =
     new(
         "Frame",
@@ -726,11 +654,13 @@ local Sidebar =
             Name =
                 "Sidebar",
 
-            Position =
-                UDim2.fromOffset(0, 0),
-
             Size =
-                UDim2.new(0, 176, 1, 0),
+                UDim2.new(
+                    0,
+                    SidebarWidth,
+                    1,
+                    0
+                ),
 
             BackgroundColor3 =
                 Theme.Surface,
@@ -744,10 +674,10 @@ Sidebar.Parent =
     Body
 
 ------------------------------------------------------------
--- Sidebar separator
+-- Sidebar divider
 ------------------------------------------------------------
 
-local Separator =
+local Divider =
     new(
         "Frame",
         {
@@ -764,29 +694,29 @@ local Separator =
                 Theme.GoldSoft,
 
             BackgroundTransparency =
-                0.65,
+                0.68,
 
             BorderSizePixel =
                 0,
         }
     )
 
-Separator.Parent =
+Divider.Parent =
     Sidebar
 
 ------------------------------------------------------------
--- Sidebar heading
+-- Navigation title
 ------------------------------------------------------------
 
-local MenuTitle =
+local NavTitle =
     new(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(17, 20),
+                UDim2.fromOffset(13, 14),
 
             Size =
-                UDim2.new(1, -34, 0, 20),
+                UDim2.new(1, -26, 0, 14),
 
             BackgroundTransparency =
                 1,
@@ -798,7 +728,7 @@ local MenuTitle =
                 Theme.TextMuted,
 
             TextSize =
-                10,
+                8,
 
             Font =
                 Enum.Font.GothamBold,
@@ -808,25 +738,22 @@ local MenuTitle =
         }
     )
 
-MenuTitle.Parent =
+NavTitle.Parent =
     Sidebar
 
 ------------------------------------------------------------
--- Home placeholder
+-- Home tab placeholder
 ------------------------------------------------------------
 
-local HomeButton =
+local Home =
     new(
         "TextButton",
         {
-            Name =
-                "Home",
-
             Position =
-                UDim2.fromOffset(12, 51),
+                UDim2.fromOffset(9, 37),
 
             Size =
-                UDim2.new(1, -24, 0, 42),
+                UDim2.new(1, -18, 0, 34),
 
             BackgroundColor3 =
                 Theme.SurfaceRaised,
@@ -842,20 +769,20 @@ local HomeButton =
         }
     )
 
-HomeButton.Parent =
+Home.Parent =
     Sidebar
 
-corner(HomeButton, 8)
+corner(Home, 7)
 
 local HomeAccent =
     new(
         "Frame",
         {
             Position =
-                UDim2.fromOffset(0, 8),
+                UDim2.fromOffset(0, 7),
 
             Size =
-                UDim2.fromOffset(3, 26),
+                UDim2.fromOffset(3, 20),
 
             BackgroundColor3 =
                 Theme.Gold,
@@ -866,19 +793,19 @@ local HomeAccent =
     )
 
 HomeAccent.Parent =
-    HomeButton
+    Home
 
 corner(HomeAccent, 3)
 
-local HomeText =
+local HomeLabel =
     new(
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(17, 0),
+                UDim2.fromOffset(14, 0),
 
             Size =
-                UDim2.new(1, -17, 1, 0),
+                UDim2.new(1, -14, 1, 0),
 
             BackgroundTransparency =
                 1,
@@ -890,67 +817,24 @@ local HomeText =
                 Theme.Text,
 
             TextSize =
-                13,
-
-            TextXAlignment =
-                Enum.TextXAlignment.Left,
+                11,
 
             Font =
                 Enum.Font.GothamSemibold,
-        }
-    )
-
-HomeText.Parent =
-    HomeButton
-
-------------------------------------------------------------
--- Future tabs placeholder
-------------------------------------------------------------
-
-local ComingSoon =
-    new(
-        "TextLabel",
-        {
-            Position =
-                UDim2.fromOffset(17, 111),
-
-            Size =
-                UDim2.new(1, -34, 0, 50),
-
-            BackgroundTransparency =
-                1,
-
-            Text =
-                "More sections will appear\nas features are added.",
-
-            TextColor3 =
-                Theme.TextMuted,
-
-            TextSize =
-                10,
-
-            TextWrapped =
-                true,
 
             TextXAlignment =
                 Enum.TextXAlignment.Left,
-
-            TextYAlignment =
-                Enum.TextYAlignment.Top,
-
-            Font =
-                Enum.Font.Gotham,
         }
     )
 
-ComingSoon.Parent =
-    Sidebar
+HomeLabel.Parent =
+    Home
 
 ------------------------------------------------------------
--- Sidebar footer
+-- Key hint
 ------------------------------------------------------------
 
-local Version =
+local KeyHint =
     new(
         "TextLabel",
         {
@@ -958,36 +842,39 @@ local Version =
                 Vector2.new(0, 1),
 
             Position =
-                UDim2.new(0, 17, 1, -14),
+                UDim2.new(0, 13, 1, -12),
 
             Size =
-                UDim2.new(1, -34, 0, 20),
+                UDim2.new(1, -26, 0, 30),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "XenOS  •  v0.1.0",
+                "RIGHT SHIFT\nToggle XenOS",
 
             TextColor3 =
                 Theme.TextMuted,
 
             TextSize =
-                9,
+                8,
+
+            Font =
+                Enum.Font.GothamMedium,
 
             TextXAlignment =
                 Enum.TextXAlignment.Left,
 
-            Font =
-                Enum.Font.GothamMedium,
+            TextYAlignment =
+                Enum.TextYAlignment.Bottom,
         }
     )
 
-Version.Parent =
+KeyHint.Parent =
     Sidebar
 
 ------------------------------------------------------------
--- Content area
+-- Content
 ------------------------------------------------------------
 
 local Content =
@@ -998,10 +885,18 @@ local Content =
                 "Content",
 
             Position =
-                UDim2.fromOffset(176, 0),
+                UDim2.fromOffset(
+                    SidebarWidth,
+                    0
+                ),
 
             Size =
-                UDim2.new(1, -176, 1, 0),
+                UDim2.new(
+                    1,
+                    -SidebarWidth,
+                    1,
+                    0
+                ),
 
             BackgroundTransparency =
                 1,
@@ -1012,7 +907,7 @@ Content.Parent =
     Body
 
 ------------------------------------------------------------
--- Welcome
+-- Header
 ------------------------------------------------------------
 
 local Welcome =
@@ -1020,10 +915,10 @@ local Welcome =
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(28, 27),
+                UDim2.fromOffset(20, 19),
 
             Size =
-                UDim2.new(1, -56, 0, 32),
+                UDim2.new(1, -40, 0, 24),
 
             BackgroundTransparency =
                 1,
@@ -1035,7 +930,7 @@ local Welcome =
                 Theme.Text,
 
             TextSize =
-                24,
+                18,
 
             Font =
                 Enum.Font.GothamBold,
@@ -1053,36 +948,29 @@ local WelcomeSub =
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(29, 62),
+                UDim2.fromOffset(21, 45),
 
             Size =
-                UDim2.new(1, -58, 0, 40),
+                UDim2.new(1, -42, 0, 18),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "XenOS has successfully connected to "
-                .. CurrentSea
-                .. ".",
+                CurrentSea
+                .. " connected successfully.",
 
             TextColor3 =
                 Theme.TextMuted,
 
             TextSize =
-                12,
-
-            TextWrapped =
-                true,
+                10,
 
             Font =
                 Enum.Font.Gotham,
 
             TextXAlignment =
                 Enum.TextXAlignment.Left,
-
-            TextYAlignment =
-                Enum.TextYAlignment.Top,
         }
     )
 
@@ -1090,7 +978,7 @@ WelcomeSub.Parent =
     Content
 
 ------------------------------------------------------------
--- Main status card
+-- Compact status card
 ------------------------------------------------------------
 
 local StatusCard =
@@ -1098,10 +986,10 @@ local StatusCard =
         "Frame",
         {
             Position =
-                UDim2.fromOffset(28, 119),
+                UDim2.fromOffset(20, 80),
 
             Size =
-                UDim2.new(1, -56, 0, 128),
+                UDim2.new(1, -40, 0, 91),
 
             BackgroundColor3 =
                 Theme.SurfaceRaised,
@@ -1114,28 +1002,25 @@ local StatusCard =
 StatusCard.Parent =
     Content
 
-corner(StatusCard, 10)
+corner(StatusCard, 8)
 
 stroke(
     StatusCard,
     Theme.Ocean,
     1,
-    0.45
+    0.55
 )
 
 ------------------------------------------------------------
--- Card accent
+-- Status side accent
 ------------------------------------------------------------
 
-local CardAccent =
+local StatusAccent =
     new(
         "Frame",
         {
-            Position =
-                UDim2.fromOffset(0, 0),
-
             Size =
-                UDim2.fromOffset(5, 128),
+                UDim2.new(0, 4, 1, 0),
 
             BackgroundColor3 =
                 Theme.OceanBright,
@@ -1145,11 +1030,11 @@ local CardAccent =
         }
     )
 
-CardAccent.Parent =
+StatusAccent.Parent =
     StatusCard
 
 ------------------------------------------------------------
--- Status indicator
+-- Status dot
 ------------------------------------------------------------
 
 local StatusDot =
@@ -1157,13 +1042,13 @@ local StatusDot =
         "Frame",
         {
             Position =
-                UDim2.fromOffset(22, 25),
+                UDim2.fromOffset(17, 17),
 
             Size =
-                UDim2.fromOffset(10, 10),
+                UDim2.fromOffset(8, 8),
 
             BackgroundColor3 =
-                Color3.fromRGB(92, 194, 123),
+                Theme.Green,
 
             BorderSizePixel =
                 0,
@@ -1173,7 +1058,7 @@ local StatusDot =
 StatusDot.Parent =
     StatusCard
 
-corner(StatusDot, 10)
+corner(StatusDot, 8)
 
 ------------------------------------------------------------
 -- Status title
@@ -1184,22 +1069,22 @@ local StatusTitle =
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(44, 17),
+                UDim2.fromOffset(34, 10),
 
             Size =
-                UDim2.new(1, -60, 0, 27),
+                UDim2.new(1, -45, 0, 22),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "Game module loaded",
+                "Game module ready",
 
             TextColor3 =
                 Theme.Text,
 
             TextSize =
-                16,
+                13,
 
             Font =
                 Enum.Font.GothamSemibold,
@@ -1213,7 +1098,7 @@ StatusTitle.Parent =
     StatusCard
 
 ------------------------------------------------------------
--- Status text
+-- Status description
 ------------------------------------------------------------
 
 local StatusText =
@@ -1221,24 +1106,22 @@ local StatusText =
         "TextLabel",
         {
             Position =
-                UDim2.fromOffset(22, 54),
+                UDim2.fromOffset(17, 38),
 
             Size =
-                UDim2.new(1, -44, 0, 51),
+                UDim2.new(1, -34, 0, 38),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "The XenOS Blox Fruits interface is ready. "
-                .. "Feature modules and tabs will be installed "
-                .. "here next.",
+                "XenOS is ready. Features will appear here.",
 
             TextColor3 =
                 Theme.TextMuted,
 
             TextSize =
-                11,
+                9,
 
             TextWrapped =
                 true,
@@ -1258,49 +1141,44 @@ StatusText.Parent =
     StatusCard
 
 ------------------------------------------------------------
--- Environment information
+-- Footer status
 ------------------------------------------------------------
 
-local Info =
+local Footer =
     new(
         "TextLabel",
         {
+            AnchorPoint =
+                Vector2.new(0, 1),
+
             Position =
-                UDim2.fromOffset(29, 267),
+                UDim2.new(0, 21, 1, -13),
 
             Size =
-                UDim2.new(1, -58, 0, 65),
+                UDim2.new(1, -42, 0, 17),
 
             BackgroundTransparency =
                 1,
 
             Text =
-                "PLACE ID   "
-                .. tostring(game.PlaceId)
-                .. "\n"
-                .. "SEA        "
-                .. CurrentSea
-                .. "\n"
-                .. "STATUS     READY",
+                "XenOS v0.2  •  "
+                .. tostring(game.PlaceId),
 
             TextColor3 =
                 Theme.TextMuted,
 
             TextSize =
-                10,
+                8,
 
             Font =
                 Enum.Font.Code,
 
             TextXAlignment =
                 Enum.TextXAlignment.Left,
-
-            TextYAlignment =
-                Enum.TextYAlignment.Top,
         }
     )
 
-Info.Parent =
+Footer.Parent =
     Content
 
 ------------------------------------------------------------
@@ -1310,148 +1188,197 @@ Info.Parent =
 local dragging =
     false
 
-local dragInput =
-    nil
+local dragInput
 
-local dragStart =
-    nil
+local dragStart
 
-local startPosition =
-    nil
+local startPosition
 
-Topbar.InputBegan:Connect(function(input)
+connect(
+    Topbar.InputBegan,
 
-    if
-        input.UserInputType
-            == Enum.UserInputType.MouseButton1
+    function(input)
 
-        or
+        if
+            input.UserInputType
+                == Enum.UserInputType.MouseButton1
 
-        input.UserInputType
-            == Enum.UserInputType.Touch
-    then
+            or input.UserInputType
+                == Enum.UserInputType.Touch
+        then
 
-        dragging = true
+            dragging =
+                true
 
-        dragStart =
-            input.Position
+            dragStart =
+                input.Position
 
-        startPosition =
-            Main.Position
+            startPosition =
+                Main.Position
 
-        input.Changed:Connect(function()
+            local endConnection
 
-            if
-                input.UserInputState
-                    == Enum.UserInputState.End
-            then
-                dragging = false
-            end
+            endConnection =
+                input.Changed:Connect(function()
 
-        end)
+                    if
+                        input.UserInputState
+                            == Enum.UserInputState.End
+                    then
 
+                        dragging =
+                            false
+
+                        if endConnection then
+                            endConnection:Disconnect()
+                        end
+                    end
+                end)
+        end
     end
+)
 
-end)
+connect(
+    Topbar.InputChanged,
 
-Topbar.InputChanged:Connect(function(input)
+    function(input)
 
-    if
-        input.UserInputType
-            == Enum.UserInputType.MouseMovement
+        if
+            input.UserInputType
+                == Enum.UserInputType.MouseMovement
 
-        or
+            or input.UserInputType
+                == Enum.UserInputType.Touch
+        then
 
-        input.UserInputType
-            == Enum.UserInputType.Touch
-    then
-
-        dragInput =
-            input
+            dragInput =
+                input
+        end
     end
+)
 
-end)
+connect(
+    UserInputService.InputChanged,
 
-UserInputService.InputChanged:Connect(function(input)
+    function(input)
 
-    if
-        input == dragInput
-        and dragging
-    then
+        if
+            input == dragInput
+            and dragging
+        then
 
-        local delta =
-            input.Position - dragStart
+            local delta =
+                input.Position
+                - dragStart
 
-        Main.Position =
-            UDim2.new(
-                startPosition.X.Scale,
-                startPosition.X.Offset + delta.X,
+            Main.Position =
+                UDim2.new(
 
-                startPosition.Y.Scale,
-                startPosition.Y.Offset + delta.Y
-            )
+                    startPosition.X.Scale,
+                    startPosition.X.Offset
+                        + delta.X,
 
+                    startPosition.Y.Scale,
+                    startPosition.Y.Offset
+                        + delta.Y
+                )
+        end
     end
-
-end)
-
-------------------------------------------------------------
--- Minimize
-------------------------------------------------------------
-
-local minimized =
-    false
-
-local NORMAL_SIZE =
-    UDim2.fromOffset(680, 430)
-
-local MINIMIZED_SIZE =
-    UDim2.fromOffset(680, 66)
-
-Minimize.MouseButton1Click:Connect(function()
-
-    minimized =
-        not minimized
-
-    Body.Visible =
-        not minimized
-
-    Minimize.Text =
-        minimized and "+"
-        or "—"
-
-    TweenService:Create(
-        Main,
-
-        TweenInfo.new(
-            0.2,
-            Enum.EasingStyle.Quart,
-            Enum.EasingDirection.Out
-        ),
-
-        {
-            Size =
-                minimized
-                and MINIMIZED_SIZE
-                or NORMAL_SIZE
-        }
-
-    ):Play()
-
-end)
+)
 
 ------------------------------------------------------------
--- Close
+-- Toggle state
 ------------------------------------------------------------
 
-Close.MouseButton1Click:Connect(function()
+local visible =
+    true
 
-    ScreenGui:Destroy()
+local function SetVisible(state)
 
-end)
+    visible =
+        state
+
+    ScreenGui.Enabled =
+        state
+end
+
+local function Toggle()
+
+    SetVisible(
+        not visible
+    )
+end
 
 ------------------------------------------------------------
--- XenOS Blox Fruits API
+-- RIGHT SHIFT TOGGLE
+------------------------------------------------------------
+
+connect(
+    UserInputService.InputBegan,
+
+    function(input)
+
+        if
+            input.KeyCode
+                == Enum.KeyCode.RightShift
+        then
+
+            Toggle()
+        end
+    end
+)
+
+------------------------------------------------------------
+-- Close button = hide
+------------------------------------------------------------
+
+connect(
+    Close.MouseButton1Click,
+
+    function()
+
+        SetVisible(false)
+    end
+)
+
+------------------------------------------------------------
+-- Close hover
+------------------------------------------------------------
+
+connect(
+    Close.MouseEnter,
+
+    function()
+
+        TweenService:Create(
+            Close,
+            TweenInfo.new(0.12),
+            {
+                BackgroundColor3 =
+                    Theme.RedHover
+            }
+        ):Play()
+    end
+)
+
+connect(
+    Close.MouseLeave,
+
+    function()
+
+        TweenService:Create(
+            Close,
+            TweenInfo.new(0.12),
+            {
+                BackgroundColor3 =
+                    Theme.Red
+            }
+        ):Play()
+    end
+)
+
+------------------------------------------------------------
+-- Public UI API
 ------------------------------------------------------------
 
 local UI = {}
@@ -1462,8 +1389,8 @@ UI.ScreenGui =
 UI.Main =
     Main
 
-UI.Body =
-    Body
+UI.Topbar =
+    Topbar
 
 UI.Sidebar =
     Sidebar
@@ -1478,30 +1405,65 @@ UI.Sea =
     CurrentSea
 
 ------------------------------------------------------------
--- SetStatus
+-- Toggle
+------------------------------------------------------------
+
+function UI:Toggle()
+
+    Toggle()
+end
+
+------------------------------------------------------------
+-- Show
+------------------------------------------------------------
+
+function UI:Show()
+
+    SetVisible(true)
+end
+
+------------------------------------------------------------
+-- Hide
+------------------------------------------------------------
+
+function UI:Hide()
+
+    SetVisible(false)
+end
+
+------------------------------------------------------------
+-- IsVisible
+------------------------------------------------------------
+
+function UI:IsVisible()
+
+    return visible
+end
+
+------------------------------------------------------------
+-- Status update
 ------------------------------------------------------------
 
 function UI:SetStatus(
     title,
     description,
-    statusColor
+    color
 )
 
-    if title then
+    if title ~= nil then
         StatusTitle.Text =
             tostring(title)
     end
 
-    if description then
+    if description ~= nil then
         StatusText.Text =
             tostring(description)
     end
 
-    if statusColor then
+    if color ~= nil then
         StatusDot.BackgroundColor3 =
-            statusColor
+            color
     end
-
 end
 
 ------------------------------------------------------------
@@ -1510,20 +1472,67 @@ end
 
 function UI:Destroy()
 
-    if ScreenGui then
-        ScreenGui:Destroy()
+    --------------------------------------------------------
+    -- Disconnect EVERY event connection created by
+    -- this execution.
+    --------------------------------------------------------
+
+    for _, connection in ipairs(
+        Connections
+    ) do
+
+        pcall(function()
+
+            if connection.Connected then
+                connection:Disconnect()
+            end
+        end)
     end
 
+    table.clear(
+        Connections
+    )
+
+    --------------------------------------------------------
+    -- Destroy GUI
+    --------------------------------------------------------
+
+    if ScreenGui then
+        pcall(function()
+            ScreenGui:Destroy()
+        end)
+    end
+
+    --------------------------------------------------------
+    -- Remove global reference
+    --------------------------------------------------------
+
+    if
+        ENV.XenOS.BloxFruitsUI
+            == UI
+    then
+
+        ENV.XenOS.BloxFruitsUI =
+            nil
+    end
 end
 
 ------------------------------------------------------------
--- Finished
+-- Register current instance
+------------------------------------------------------------
+
+ENV.XenOS.BloxFruitsUI =
+    UI
+
+------------------------------------------------------------
+-- Loaded
 ------------------------------------------------------------
 
 print(
     "[XenOS/BloxFruits]",
-    "UI loaded for",
-    CurrentSea
+    "Compact UI loaded |",
+    CurrentSea,
+    "| RightShift = Toggle"
 )
 
 return UI
