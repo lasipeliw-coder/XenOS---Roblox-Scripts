@@ -1,206 +1,211 @@
+--============================================================
 -- XenOS Universal Loader
+-- v0.2.0
+--============================================================
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
+------------------------------------------------------------
+-- CONFIG
+------------------------------------------------------------
+
 local BASE_URL =
     "https://raw.githubusercontent.com/" ..
-    "lasipeliw-coder/XenOS---Roblox-Scripts/" ..
-    "refs/heads/main/XenOS/"
-
-local ENV = getgenv and getgenv() or _G
-
-ENV.XenOS = ENV.XenOS or {}
-
-local XenOS = ENV.XenOS
-
-XenOS.Version = "0.1.1"
-XenOS.PlaceId = game.PlaceId
-XenOS.GameId = game.GameId
-XenOS.Loaded = false
-XenOS.ActiveModule = nil
+    "lasipeliw-coder/" ..
+    "XenOS---Roblox-Scripts/" ..
+    "main/XenOS/SPGames/"
 
 ------------------------------------------------------------
--- Prevent duplicate loader
-------------------------------------------------------------
-
-if XenOS.LoaderRunning then
-    warn("[XenOS] Loader is already running.")
-    return
-end
-
-XenOS.LoaderRunning = true
-
-------------------------------------------------------------
--- Logging
+-- LOGGING
 ------------------------------------------------------------
 
 local function log(...)
     print("[XenOS]", ...)
 end
 
-local function warning(...)
-    warn("[XenOS]", ...)
+local function errorLog(...)
+    warn("[XenOS ERROR]", ...)
 end
 
 ------------------------------------------------------------
--- Game aliases
+-- GLOBAL STATE
 ------------------------------------------------------------
 
-local PLACE_ALIASES = {
+local ENV =
+    (getgenv and getgenv())
+    or _G
 
-    -- Blox Fruits First Sea
-    [2753915549] = "2753915549",
+ENV.XenOS =
+    ENV.XenOS or {}
 
-    -- Blox Fruits Second Sea
-    [4442272183] = "2753915549",
+local XenOS =
+    ENV.XenOS
 
-    -- Blox Fruits Third Sea
-    [7449423635] = "2753915549",
+XenOS.Version =
+    "0.2.0"
+
+XenOS.PlaceId =
+    game.PlaceId
+
+XenOS.GameId =
+    game.GameId
+
+XenOS.Loaded =
+    false
+
+XenOS.ActiveModule =
+    nil
+
+------------------------------------------------------------
+-- PLACE ALIASES
+------------------------------------------------------------
+
+-- Normally XenOS loads:
+--
+-- SPGames/<PlaceId>.lua
+--
+-- Some Roblox games use multiple PlaceIds.
+-- Those can point to one shared module here.
+
+local PlaceAliases = {
+
+    --------------------------------------------------------
+    -- Blox Fruits
+    --------------------------------------------------------
+
+    -- First Sea
+    [2753915549] = 2753915549,
+
+    -- Second Sea
+    [4442272183] = 2753915549,
+
+    -- Third Sea
+    [7449423635] = 2753915549,
 }
 
 ------------------------------------------------------------
--- Determine module
+-- DETECT CURRENT GAME
 ------------------------------------------------------------
 
-local currentPlaceId = game.PlaceId
+local currentPlaceId =
+    game.PlaceId
 
-local moduleName =
-    PLACE_ALIASES[currentPlaceId]
-    or tostring(currentPlaceId)
+local moduleId =
+    PlaceAliases[currentPlaceId]
+    or currentPlaceId
 
-local modulePath =
-    "SPGames/" .. moduleName .. ".lua"
+------------------------------------------------------------
+-- BUILD URL
+------------------------------------------------------------
 
 local moduleURL =
-    BASE_URL .. modulePath
+    BASE_URL
+    .. tostring(moduleId)
+    .. ".lua"
+    .. "?nocache="
+    .. tostring(os.time())
 
 ------------------------------------------------------------
--- Header
+-- HEADER
 ------------------------------------------------------------
 
 print("")
-print("====================================================")
-print("                     XenOS")
-print("====================================================")
+print("==================================================")
+print("                    XenOS")
+print("==================================================")
 
 log("Version :", XenOS.Version)
 log("PlaceId :", currentPlaceId)
 log("GameId  :", game.GameId)
-log("Module  :", modulePath)
-log("URL     :", moduleURL)
+log("Module  :", tostring(moduleId) .. ".lua")
 
-if moduleName ~= tostring(currentPlaceId) then
+if moduleId ~= currentPlaceId then
+
     log(
         "Alias   :",
-        tostring(currentPlaceId),
+        currentPlaceId,
         "->",
-        moduleName
+        moduleId
     )
+
 end
 
 ------------------------------------------------------------
--- Download
+-- DOWNLOAD MODULE
 ------------------------------------------------------------
 
-local function download(url)
+log("Downloading game module...")
 
-    local success, response =
-        pcall(function()
-            return game:HttpGet(url)
-        end)
+local success, source =
+    pcall(function()
 
-    if not success then
-        return nil, tostring(response)
-    end
-
-    if type(response) ~= "string" then
-        return nil, "HTTP response wasn't a string."
-    end
-
-    if #response == 0 then
-        return nil, "GitHub returned an empty response."
-    end
-
-    --------------------------------------------------------
-    -- Detect obvious GitHub error responses
-    --------------------------------------------------------
-
-    if response:find("404: Not Found", 1, true) then
-        return nil, "GitHub returned 404: Not Found"
-    end
-
-    if response:find("<!DOCTYPE html>", 1, true) then
-        return nil, "GitHub returned HTML instead of Lua."
-    end
-
-    return response
-end
-
-------------------------------------------------------------
--- Compile
-------------------------------------------------------------
-
-local function compile(source, chunkName)
-
-    if type(loadstring) ~= "function" then
-        return nil, "Executor does not support loadstring()."
-    end
-
-    --------------------------------------------------------
-    -- Capture BOTH return values from loadstring.
-    --
-    -- loadstring normally returns:
-    --
-    -- function
-    --
-    -- OR
-    --
-    -- nil, "syntax error..."
-    --------------------------------------------------------
-
-    local success, chunk, compileError =
-        pcall(
-            loadstring,
-            source,
-            chunkName
+        return game:HttpGet(
+            moduleURL
         )
 
-    if not success then
-        return nil, tostring(chunk)
-    end
+    end)
 
-    if type(chunk) ~= "function" then
+if not success then
 
-        return nil,
-            tostring(
-                compileError
-                or "loadstring returned nil."
-            )
-    end
+    errorLog(
+        "Failed to download game module."
+    )
 
-    return chunk
-end
+    errorLog(source)
 
-------------------------------------------------------------
--- Download module
-------------------------------------------------------------
-
-log("Looking for supported game module...")
-
-local source, downloadError =
-    download(moduleURL)
-
-if not source then
-
-    warning("Game module could not be downloaded.")
-    warning("Expected:", modulePath)
-    warning("Reason:", downloadError)
-
-    XenOS.LoaderRunning = false
     return
 end
+
+------------------------------------------------------------
+-- RESPONSE VALIDATION
+------------------------------------------------------------
+
+if type(source) ~= "string" then
+
+    errorLog(
+        "Expected Lua source, got:",
+        typeof(source)
+    )
+
+    return
+end
+
+if #source == 0 then
+
+    errorLog(
+        "Downloaded module was empty."
+    )
+
+    return
+end
+
+------------------------------------------------------------
+-- DETECT GITHUB ERROR
+------------------------------------------------------------
+
+if source:find(
+    "404: Not Found",
+    1,
+    true
+) then
+
+    errorLog(
+        "XenOS does not currently support this game."
+    )
+
+    errorLog(
+        "Missing module:",
+        tostring(moduleId) .. ".lua"
+    )
+
+    return
+end
+
+------------------------------------------------------------
+-- DEBUG OUTPUT
+------------------------------------------------------------
 
 log(
     "Downloaded:",
@@ -209,61 +214,78 @@ log(
 )
 
 ------------------------------------------------------------
--- Small source sanity check
+-- CHECK LOADSTRING
 ------------------------------------------------------------
 
+if type(loadstring) ~= "function" then
+
+    errorLog(
+        "Executor does not support loadstring()."
+    )
+
+    return
+end
+
+------------------------------------------------------------
+-- COMPILE
+------------------------------------------------------------
+
+local compiled, compileError =
+    loadstring(source)
+
+if not compiled then
+
+    errorLog(
+        "Game module failed to compile."
+    )
+
+    errorLog(
+        compileError
+        or "Unknown compilation error."
+    )
+
+    return
+end
+
 log(
-    "Source preview:",
-    source:sub(1, 60):gsub("\n", " ")
+    "Module compiled successfully."
 )
 
 ------------------------------------------------------------
--- Compile module
+-- EXECUTE
 ------------------------------------------------------------
 
-local chunk, compileError =
-    compile(
-        source,
-        "@XenOS/" .. modulePath
+local ran, result =
+    pcall(compiled)
+
+if not ran then
+
+    errorLog(
+        "Game module crashed."
     )
 
-if not chunk then
+    errorLog(result)
 
-    warning("Game module failed to compile.")
-    warning("Compiler error:")
-    warning(compileError)
-
-    XenOS.LoaderRunning = false
-    return
-end
-
-log("Compilation successful.")
-
-------------------------------------------------------------
--- Execute
-------------------------------------------------------------
-
-local success, moduleResult =
-    pcall(chunk)
-
-if not success then
-
-    warning("Game module crashed while running.")
-    warning(moduleResult)
-
-    XenOS.LoaderRunning = false
     return
 end
 
 ------------------------------------------------------------
--- Success
+-- STORE MODULE
 ------------------------------------------------------------
 
-XenOS.ActiveModule = moduleResult
-XenOS.Loaded = true
-XenOS.LoaderRunning = false
+XenOS.ActiveModule =
+    result
 
-log("Blox Fruits module successfully loaded.")
+XenOS.Loaded =
+    true
 
-print("====================================================")
+------------------------------------------------------------
+-- COMPLETE
+------------------------------------------------------------
+
+log(
+    "Game module loaded successfully."
+)
+
+print("==================================================")
 print("")
