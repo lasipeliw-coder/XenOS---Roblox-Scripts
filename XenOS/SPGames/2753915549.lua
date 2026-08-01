@@ -3,7 +3,7 @@
                     XenOS - Blox Fruits
     ============================================================
 
-    Version: 0.4.0
+    Version: 0.4.1
 
     Feature:
         Auto Farm Chest
@@ -13,7 +13,8 @@
         - Finds instances named Chest<number>
         - Moves to nearest available chest
         - Watches the EXACT selected chest
-        - The instant one of that chest's children is removed:
+        - Tracks the selected chest's initial contents
+        - The instant one of those contents is removed at any depth:
               * cancel tween
               * mark chest consumed
               * move to another chest
@@ -120,6 +121,9 @@ local CurrentChest =
     nil
 
 local CurrentTween =
+    nil
+
+local CurrentTargetCancel =
     nil
 
 local FarmGeneration =
@@ -1543,7 +1547,7 @@ local Footer =
                 1,
 
             Text =
-                "XenOS • v0.4",
+                "XenOS • v0.4.1",
 
             TextColor3 =
                 Theme.TextMuted,
@@ -1774,14 +1778,21 @@ end
 -- Tween cancellation
 ------------------------------------------------------------
 
-local function CancelTween()
+local function CancelTween(tween)
 
-    if CurrentTween then
+    local tweenToCancel =
+        tween
+        or CurrentTween
 
-        pcall(function()
-            CurrentTween:Cancel()
-        end)
+    if not tweenToCancel then
+        return
+    end
 
+    pcall(function()
+        tweenToCancel:Cancel()
+    end)
+
+    if CurrentTween == tweenToCancel then
         CurrentTween =
             nil
     end
@@ -1827,95 +1838,172 @@ local function MoveToChest(
         chest
 
     --------------------------------------------------------
-    -- THIS is the important fix.
-    --
-    -- We listen to ChildRemoved directly.
+    -- Snapshot the contents that made this chest valid.
     --------------------------------------------------------
 
-    local chestFinished =
+    local trackedContents =
+        {}
+
+    for _, descendant
+        in ipairs(chest:GetDescendants())
+    do
+
+        trackedContents[descendant] =
+            true
+    end
+
+    if next(trackedContents) == nil then
+
+        ConsumedChests[chest] =
+            true
+
+        CurrentChest =
+            nil
+
+        return
+    end
+
+    local targetFinished =
         false
 
-    local childRemovedConnection =
+    local targetTween =
         nil
 
-    local ancestryConnection =
-        nil
+    local targetConnections =
+        {}
+
+    local function DisconnectTargetConnections()
+
+        for _, connection
+            in ipairs(targetConnections)
+        do
+
+            pcall(function()
+
+                if connection.Connected then
+                    connection:Disconnect()
+                end
+            end)
+        end
+
+        table.clear(
+            targetConnections
+        )
+    end
+
+    local function FinishTarget(consumed)
+
+        if targetFinished then
+            return
+        end
+
+        targetFinished =
+            true
+
+        if consumed then
+
+            ConsumedChests[chest] =
+                true
+
+            SetStatus(
+                chest.Name
+                .. " collected"
+            )
+        end
+
+        CancelTween(
+            targetTween
+        )
+    end
+
+    local cancelThisTarget =
+        function()
+
+            FinishTarget(
+                false
+            )
+        end
+
+    CurrentTargetCancel =
+        cancelThisTarget
 
     --------------------------------------------------------
-    -- Any child being deleted means this chest has been
-    -- activated/collected.
+    -- Stop this target immediately when one of the contents
+    -- that existed at selection time begins leaving it.
     --------------------------------------------------------
 
-    childRemovedConnection =
-        chest.ChildRemoved:Connect(
-            function(removedChild)
+    table.insert(
+        targetConnections,
 
-                if chestFinished then
+        chest.DescendantRemoving:Connect(
+            function(descendant)
+
+                if
+                    targetFinished
+                    or not trackedContents[descendant]
+                then
+
                     return
                 end
 
-                chestFinished =
+                FinishTarget(
                     true
-
-                ConsumedChests[chest] =
-                    true
-
-                SetStatus(
-                    chest.Name
-                    .. " collected"
                 )
-
-                ------------------------------------------------
-                -- STOP moving to this chest immediately.
-                ------------------------------------------------
-
-                CancelTween()
             end
         )
+    )
 
     --------------------------------------------------------
     -- Also catch entire chest deletion
     --------------------------------------------------------
 
-    ancestryConnection =
+    table.insert(
+        targetConnections,
+
         chest.AncestryChanged:Connect(
             function()
 
-                if chestFinished then
+                if targetFinished then
                     return
                 end
 
                 if not chest.Parent then
 
-                    chestFinished =
+                    FinishTarget(
                         true
-
-                    ConsumedChests[chest] =
-                        true
-
-                    CancelTween()
+                    )
                 end
             end
         )
+    )
 
     --------------------------------------------------------
-    -- Sanity check after connections are installed
+    -- Close the small race between the snapshot and listeners.
+    -- Every tracked item must still be inside this chest.
     --------------------------------------------------------
 
-    if #chest:GetChildren() == 0 then
+    for content
+        in pairs(trackedContents)
+    do
 
-        chestFinished =
-            true
+        if
+            not content.Parent
+            or not content:IsDescendantOf(chest)
+        then
 
-        ConsumedChests[chest] =
-            true
+            FinishTarget(
+                true
+            )
+
+            break
+        end
     end
 
     --------------------------------------------------------
     -- Tween
     --------------------------------------------------------
 
-    if not chestFinished then
+    if not targetFinished then
 
         local destination =
             chestPart.CFrame
@@ -1942,7 +2030,7 @@ local function MoveToChest(
             .. chest.Name
         )
 
-        CurrentTween =
+        targetTween =
             TweenService:Create(
                 root,
 
@@ -1958,40 +2046,53 @@ local function MoveToChest(
                 }
             )
 
-        CurrentTween:Play()
+        CurrentTween =
+            targetTween
+
+        targetTween:Play()
 
         --------------------------------------------------------
         -- Wait while tweening.
         --
-        -- ChildRemoved can interrupt this immediately.
+        -- DescendantRemoving can interrupt this immediately.
         --------------------------------------------------------
 
         while
             AutoFarmChest
             and not Destroyed
             and generation == FarmGeneration
-            and not chestFinished
+            and not targetFinished
         do
 
             ----------------------------------------------------
-            -- Extra safety if children disappeared between
-            -- events/checks.
+            -- Fallback for executors that miss an instance
+            -- signal: detect a tracked item that has left.
             ----------------------------------------------------
 
-            if
-                not chest.Parent
-                or #chest:GetChildren() == 0
-            then
+            if not chest.Parent then
 
-                chestFinished =
+                FinishTarget(
                     true
+                )
 
-                ConsumedChests[chest] =
-                    true
+            else
 
-                CancelTween()
+                for content
+                    in pairs(trackedContents)
+                do
 
-                break
+                    if
+                        not content.Parent
+                        or not content:IsDescendantOf(chest)
+                    then
+
+                        FinishTarget(
+                            true
+                        )
+
+                        break
+                    end
+                end
             end
 
             ----------------------------------------------------
@@ -2000,12 +2101,17 @@ local function MoveToChest(
             ----------------------------------------------------
 
             if
-                CurrentTween
-                and CurrentTween.PlaybackState
+                targetTween
+                and targetTween.PlaybackState
                     == Enum.PlaybackState.Completed
             then
 
-                CurrentTween =
+                if CurrentTween == targetTween then
+                    CurrentTween =
+                        nil
+                end
+
+                targetTween =
                     nil
 
                 SetStatus(
@@ -2031,21 +2137,33 @@ local function MoveToChest(
         AutoFarmChest
         and not Destroyed
         and generation == FarmGeneration
-        and not chestFinished
+        and not targetFinished
     do
 
-        if
-            not chest.Parent
-            or #chest:GetChildren() == 0
-        then
+        if not chest.Parent then
 
-            chestFinished =
+            FinishTarget(
                 true
+            )
 
-            ConsumedChests[chest] =
-                true
+        else
 
-            break
+            for content
+                in pairs(trackedContents)
+            do
+
+                if
+                    not content.Parent
+                    or not content:IsDescendantOf(chest)
+                then
+
+                    FinishTarget(
+                        true
+                    )
+
+                    break
+                end
+            end
         end
 
         task.wait(
@@ -2057,21 +2175,16 @@ local function MoveToChest(
     -- Cleanup per-chest listeners
     ------------------------------------------------------------
 
-    if childRemovedConnection then
+    DisconnectTargetConnections()
 
-        pcall(function()
-            childRemovedConnection:Disconnect()
-        end)
+    CancelTween(
+        targetTween
+    )
+
+    if CurrentTargetCancel == cancelThisTarget then
+        CurrentTargetCancel =
+            nil
     end
-
-    if ancestryConnection then
-
-        pcall(function()
-            ancestryConnection:Disconnect()
-        end)
-    end
-
-    CancelTween()
 
     CurrentChest =
         nil
@@ -2176,6 +2289,14 @@ local function StopChestFarm()
         false
 
     FarmGeneration += 1
+
+    if CurrentTargetCancel then
+
+        CurrentTargetCancel()
+
+        CurrentTargetCancel =
+            nil
+    end
 
     CancelTween()
 
@@ -2613,6 +2734,14 @@ function UI:Destroy()
 
     FarmGeneration += 1
 
+    if CurrentTargetCancel then
+
+        CurrentTargetCancel()
+
+        CurrentTargetCancel =
+            nil
+    end
+
     CancelTween()
 
     --------------------------------------------------------
@@ -2683,7 +2812,7 @@ SetStatus(
 
 print(
     "[XenOS/BloxFruits]",
-    "v0.4 loaded |",
+    "v0.4.1 loaded |",
     CurrentSea,
     "| Auto Farm Chest ready |",
     "RightShift = UI"
